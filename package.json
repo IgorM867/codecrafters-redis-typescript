@@ -6,6 +6,6 @@
     "dev": "bun run app/main.ts"
   },
   "devDependencies": {
-    "@types/bun": "latest"
+    "@types/bun": "^1.1.13"
   }
 }
