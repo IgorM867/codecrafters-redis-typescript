@@ -2,7 +2,7 @@ import * as net from "net";
 import { parse, type RESPDataType } from "./parseRedisCommand";
 import { serialazeBulkString, serialazeSimpleError, serialazeSimpleString } from "./serialazeRedisCommand";
 
-const storage = new Map<string, { value: string; expiry: number | null }>();
+const storage = new Map<string, string>();
 
 const commands = {
   PING: () => serialazeSimpleString("PONG"),
@@ -19,24 +19,20 @@ const commands = {
     if (args[2] && args[2].toUpperCase() === "PX") {
       if (!args[3]) return serialazeSimpleString("SYNTAX ERR expecting expiry time after PX");
 
-      storage.set(key, { value, expiry: Date.now() + Number(args[3]) });
+      storage.set(key, value);
+      setTimeout(() => storage.delete(key), Number(args[3]));
       return serialazeSimpleString("OK");
     }
 
-    storage.set(key, { value, expiry: null });
+    storage.set(key, value);
     return serialazeSimpleString("OK");
   },
   GET: (key: string | undefined) => {
     if (!key || !storage.has(key)) {
       return serialazeBulkString("");
     }
-    const { value, expiry } = storage.get(key)!;
 
-    if (expiry && expiry - Date.now() <= 0) {
-      return serialazeBulkString("");
-    }
-
-    return serialazeBulkString(value);
+    return serialazeBulkString(storage.get(key)!);
   },
 };
 
