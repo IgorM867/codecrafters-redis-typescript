@@ -1,6 +1,28 @@
 import * as net from "net";
 import { parse, type RESPDataType } from "./parseRedisCommand";
-import { serialazeBulkString, serialazeSimpleError, serialazeSimpleString } from "./serialazeRedisCommand";
+import { parseArgs } from "util";
+import {
+  serialazeArray,
+  serialazeBulkString,
+  serialazeSimpleError,
+  serialazeSimpleString,
+} from "./serialazeRedisCommand";
+
+const { values } = parseArgs({
+  args: Bun.argv,
+  options: {
+    dir: {
+      type: "string",
+    },
+    dbfilename: {
+      type: "string",
+    },
+  },
+  strict: true,
+  allowPositionals: true,
+});
+
+console.log(values);
 
 const storage = new Map<string, string>();
 
@@ -34,6 +56,18 @@ const commands = {
 
     return serialazeBulkString(storage.get(key)!);
   },
+  GET_CONFIG: (arg: string | undefined) => {
+    if (!arg) return serialazeSimpleError("Not parameters are provided");
+
+    switch (arg.toLowerCase()) {
+      case "dir":
+        return serialazeArray(serialazeBulkString("dir"), serialazeBulkString(values.dir || ""));
+      case "dbfilename":
+        return serialazeArray(serialazeBulkString("dbfilename"), serialazeBulkString(values.dbfilename || ""));
+      default:
+        return serialazeSimpleError(`Invalid parameter: '${arg}'`);
+    }
+  },
 };
 
 const server: net.Server = net.createServer((connection: net.Socket) => {
@@ -52,6 +86,15 @@ const server: net.Server = net.createServer((connection: net.Socket) => {
         break;
       case "GET":
         connection.write(commands.GET(input[1] as string | undefined));
+        break;
+      case "CONFIG":
+        switch ((input[1] as string).toUpperCase()) {
+          case "GET":
+            connection.write(commands.GET_CONFIG(input[2] as string | undefined));
+            break;
+          default:
+            connection.write(serialazeSimpleError(`Unknown CONFIG command: ${input[1]}`));
+        }
         break;
       default:
         connection.write(serialazeSimpleError(`Unknown command: ${input[0]}`));
