@@ -1,6 +1,6 @@
 export function serialazeBulkString(value: string) {
   if (value.length === 0) {
-    const str = `$${value.length - 1}\r\n${value}\r\n`;
+    const str = `$-1\r\n`;
 
     return new Uint8Array(new Buffer(str));
   }

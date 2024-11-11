@@ -2,7 +2,7 @@ import * as net from "net";
 import { parse, type RESPDataType } from "./parseRedisCommand";
 import { serialazeBulkString, serialazeSimpleError, serialazeSimpleString } from "./serialazeRedisCommand";
 
-const storage = new Map();
+const storage = new Map<string, { value: string; expiry: number | null }>();
 
 const commands = {
   PING: () => serialazeSimpleString("PONG"),
@@ -19,23 +19,24 @@ const commands = {
     if (args[2] && args[2].toUpperCase() === "PX") {
       if (!args[3]) return serialazeSimpleString("SYNTAX ERR expecting expiry time after PX");
 
-      storage.set(key, { val: value, expriry: Date.now() + Number(args[1]) });
+      storage.set(key, { value, expiry: Date.now() + Number(args[3]) });
+      return serialazeSimpleString("OK");
     }
 
-    storage.set(key, { val: value, expriry: null });
+    storage.set(key, { value, expiry: null });
     return serialazeSimpleString("OK");
   },
   GET: (key: string | undefined) => {
     if (!key || !storage.has(key)) {
       return serialazeBulkString("");
     }
-    const { val, expiry } = storage.get(key);
+    const { value, expiry } = storage.get(key)!;
 
     if (expiry && expiry - Date.now() <= 0) {
       return serialazeBulkString("");
     }
 
-    return serialazeBulkString(val);
+    return serialazeBulkString(value);
   },
 };
 
@@ -51,7 +52,7 @@ const server: net.Server = net.createServer((connection: net.Socket) => {
         connection.write(commands.ECHO(input[1] as string));
         break;
       case "SET":
-        connection.write(commands.SET(...(input as Array<string | undefined>)));
+        connection.write(commands.SET(...(input.slice(1) as Array<string | undefined>)));
         break;
       case "GET":
         connection.write(commands.GET(input[1] as string | undefined));
