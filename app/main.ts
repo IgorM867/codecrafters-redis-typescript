@@ -26,7 +26,12 @@ export const { values } = parseArgs({
 });
 
 export let db: Map<string, { value: string; expire: bigint | null }> = new Map();
-
+export const serverState = {
+  port: Number(values.port) || 6379,
+  role: values.replicaof ? "slave" : "master",
+  master_replid: "8371b4fb1155b71f4a04d3e1bc3e18c4a990aeeb",
+  master_repl_offset: 0,
+};
 main();
 
 async function main() {
@@ -74,7 +79,7 @@ async function main() {
     });
   });
 
-  server.listen(Number(values.port) || 6379, "127.0.0.1");
+  server.listen(serverState.port, "127.0.0.1");
 
   console.log("Redis server is working...");
 }

@@ -1,4 +1,4 @@
-import { db, values } from "./main";
+import { db, serverState, values } from "./main";
 import {
   serialazeArray,
   serialazeBulkString,
@@ -64,7 +64,16 @@ export const commands = {
     return serialazeBulkString("");
   },
   INFO: (arg: string | undefined) => {
-    const sections = [{ name: "Replication", values: [`role:${values.replicaof ? "slave" : "master"}`] }];
+    const sections = [
+      {
+        name: "Replication",
+        values: [
+          `role:${serverState.role}`,
+          `master_replid:${serverState.master_replid}`,
+          `master_repl_offset:${serverState.master_repl_offset}`,
+        ],
+      },
+    ];
 
     if (arg === "replication") {
       const values = sections.find(({ name }) => name === "Replication")!.values.join("\n");
