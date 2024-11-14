@@ -63,4 +63,7 @@ export const commands = {
 
     return serialazeBulkString("");
   },
+  INFO: (arg: string | undefined) => {
+    return serialazeBulkString("role:master");
+  },
 };

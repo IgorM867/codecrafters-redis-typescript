@@ -16,7 +16,6 @@ export const { values } = parseArgs({
     },
     port: {
       type: "string",
-      default: "6379",
     },
   },
   strict: true,
@@ -69,7 +68,7 @@ async function main() {
     });
   });
 
-  server.listen(Number(values.port), "127.0.0.1");
+  server.listen(Number(values.port) || 6379, "127.0.0.1");
 
   console.log("Redis server is working...");
 }
