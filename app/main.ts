@@ -17,6 +17,9 @@ export const { values } = parseArgs({
     port: {
       type: "string",
     },
+    replicaof: {
+      type: "string",
+    },
   },
   strict: true,
   allowPositionals: true,

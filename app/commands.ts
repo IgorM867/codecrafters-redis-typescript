@@ -64,7 +64,7 @@ export const commands = {
     return serialazeBulkString("");
   },
   INFO: (arg: string | undefined) => {
-    const sections = [{ name: "Replication", values: ["role:master"] }];
+    const sections = [{ name: "Replication", values: [`role:${values.replicaof ? "slave" : "master"}`] }];
 
     if (arg === "replication") {
       const values = sections.find(({ name }) => name === "Replication")!.values.join("\n");
