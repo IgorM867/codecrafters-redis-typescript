@@ -14,6 +14,10 @@ export const { values } = parseArgs({
     dbfilename: {
       type: "string",
     },
+    port: {
+      type: "string",
+      default: "6379",
+    },
   },
   strict: true,
   allowPositionals: true,
@@ -65,7 +69,7 @@ async function main() {
     });
   });
 
-  server.listen(6379, "127.0.0.1");
+  server.listen(Number(values.port), "127.0.0.1");
 
   console.log("Redis server is working...");
 }
