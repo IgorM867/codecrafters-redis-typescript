@@ -62,6 +62,9 @@ async function main() {
         case "KEYS":
           connection.write(commands.KEYS(input[1] as string | undefined));
           break;
+        case "INFO":
+          connection.write(commands.INFO(input[1] as string | undefined));
+          break;
         default:
           connection.write(serialazeSimpleError(`Unknown command: ${input[0]}`));
       }

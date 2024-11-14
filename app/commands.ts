@@ -64,6 +64,19 @@ export const commands = {
     return serialazeBulkString("");
   },
   INFO: (arg: string | undefined) => {
-    return serialazeBulkString("role:master");
+    const sections = [{ name: "Replication", values: ["role:master"] }];
+
+    if (arg === "replication") {
+      const values = sections.find(({ name }) => name === "Replication")!.values.join("\n");
+
+      return serialazeBulkString("# Replication\n" + values);
+    }
+    let result = "";
+    sections.forEach((section) => {
+      result += `# ${section.name}\n`;
+      result += section.values.join("\n");
+    });
+
+    return serialazeBulkString(result);
   },
 };
