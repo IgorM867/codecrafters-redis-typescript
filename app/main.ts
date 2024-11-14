@@ -1,9 +1,9 @@
 import * as net from "net";
 import { parse, type RESPDataType } from "./parseRedisCommand";
-import { serialazeSimpleError } from "./serialazeRedisCommand";
-import { commands } from "./commands";
+import { execCommand } from "./commands";
 import { RDBReader } from "./RDBReader";
 import { parseArgs } from "util";
+import { serialazeArray, serialazeBulkString } from "./serialazeRedisCommand";
 
 export const { values } = parseArgs({
   args: Bun.argv,
@@ -45,43 +45,20 @@ async function main() {
     connection.on("data", (data) => {
       const [input]: [RESPDataType[], number] = parse(data) as [RESPDataType[], number];
 
-      switch ((input[0] as string).toUpperCase()) {
-        case "PING":
-          connection.write(commands.PING());
-          break;
-        case "ECHO":
-          connection.write(commands.ECHO(input[1] as string));
-          break;
-        case "SET":
-          connection.write(commands.SET(...(input.slice(1) as Array<string | undefined>)));
-          break;
-        case "GET":
-          connection.write(commands.GET(input[1] as string | undefined));
-          break;
-        case "CONFIG":
-          switch ((input[1] as string).toUpperCase()) {
-            case "GET":
-              connection.write(commands.GET_CONFIG(input[2] as string | undefined));
-              break;
-            default:
-              connection.write(serialazeSimpleError(`Unknown CONFIG command: ${input[1]}`));
-          }
-          break;
-        case "KEYS":
-          connection.write(commands.KEYS(input[1] as string | undefined));
-          break;
-        case "INFO":
-          connection.write(commands.INFO(input[1] as string | undefined));
-          break;
-        default:
-          connection.write(serialazeSimpleError(`Unknown command: ${input[0]}`));
-      }
+      execCommand(input, connection);
     });
   });
 
   server.listen(serverState.port, "127.0.0.1");
+  console.log(`Redis server is listening on port ${serverState.port}...`);
 
-  console.log("Redis server is working...");
+  if (serverState.role === "slave") {
+    const [host, port] = values.replicaof!.split(" ");
+    const masterConnection: net.Socket = net.createConnection({ host, port: Number(port) });
+    masterConnection.on("ready", () => {
+      masterConnection.write(serialazeArray(serialazeBulkString("PING")));
+    });
+  }
 }
 
 async function readRDBFile(path: string | undefined) {

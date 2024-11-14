@@ -1,4 +1,6 @@
+import * as net from "net";
 import { db, serverState, values } from "./main";
+import type { RESPDataType } from "./parseRedisCommand";
 import {
   serialazeArray,
   serialazeBulkString,
@@ -6,7 +8,7 @@ import {
   serialazeSimpleString,
 } from "./serialazeRedisCommand";
 
-export const commands = {
+const commands = {
   PING: () => serialazeSimpleString("PONG"),
   ECHO: (arg: string) => serialazeBulkString(arg),
   SET: (...args: Array<string | undefined>) => {
@@ -89,3 +91,37 @@ export const commands = {
     return serialazeBulkString(result);
   },
 };
+
+export function execCommand(input: RESPDataType[], connection: net.Socket) {
+  switch ((input[0] as string).toUpperCase()) {
+    case "PING":
+      connection.write(commands.PING());
+      break;
+    case "ECHO":
+      connection.write(commands.ECHO(input[1] as string));
+      break;
+    case "SET":
+      connection.write(commands.SET(...(input.slice(1) as Array<string | undefined>)));
+      break;
+    case "GET":
+      connection.write(commands.GET(input[1] as string | undefined));
+      break;
+    case "CONFIG":
+      switch ((input[1] as string).toUpperCase()) {
+        case "GET":
+          connection.write(commands.GET_CONFIG(input[2] as string | undefined));
+          break;
+        default:
+          connection.write(serialazeSimpleError(`Unknown CONFIG command: ${input[1]}`));
+      }
+      break;
+    case "KEYS":
+      connection.write(commands.KEYS(input[1] as string | undefined));
+      break;
+    case "INFO":
+      connection.write(commands.INFO(input[1] as string | undefined));
+      break;
+    default:
+      connection.write(serialazeSimpleError(`Unknown command: ${input[0]}`));
+  }
+}
