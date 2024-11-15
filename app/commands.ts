@@ -131,9 +131,22 @@ export function execCommand(input: RESPDataType[], connection: net.Socket) {
       connection.write(commands.REPLCONF(input.slice(1) as Array<string | undefined>));
       break;
     case "PSYNC":
-      connection.write(commands.PSYNC(input.slice(1) as Array<string | undefined>));
+      {
+        connection.write(commands.PSYNC(input.slice(1) as Array<string | undefined>));
+        sendRDBFile(connection);
+      }
       break;
     default:
       connection.write(serialazeSimpleError(`Unknown command: ${input[0]}`));
   }
+}
+function sendRDBFile(con: net.Socket) {
+  const emptyRDBFile =
+    "524544495330303131fa0972656469732d76657205372e322e30fa0a72656469732d62697473c040fa056374696d65c26d08bc65fa08757365642d6d656dc2b0c41000fa08616f662d62617365c000fff06e3bfec0ff5aa2";
+
+  const buffer = Uint8Array.from(Buffer.from(emptyRDBFile, "hex"));
+  const length = Uint8Array.from(Buffer.from(`$${buffer.length}\r\n`, "utf-8"));
+  const message = Uint8Array.from(Buffer.concat([length, buffer]));
+
+  con.write(message);
 }
