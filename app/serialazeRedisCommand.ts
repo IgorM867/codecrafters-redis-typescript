@@ -38,3 +38,9 @@ export function serialazeArray(...args: Uint8Array[]) {
 
   return newBuffer;
 }
+
+export function serialazeBulkStringArray(arr: string[]) {
+  const strings = arr.map((val) => serialazeBulkString(val));
+
+  return serialazeArray(...strings);
+}

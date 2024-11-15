@@ -93,6 +93,9 @@ const commands = {
   REPLCONF: (args: Array<string | undefined>) => {
     return serialazeSimpleString("OK");
   },
+  PSYNC: (args: Array<string | undefined>) => {
+    return serialazeSimpleString("FULLRESYNC <REPL_ID> 0");
+  },
 };
 
 export function execCommand(input: RESPDataType[], connection: net.Socket) {
@@ -127,6 +130,8 @@ export function execCommand(input: RESPDataType[], connection: net.Socket) {
     case "REPLCONF":
       connection.write(commands.REPLCONF(input.slice(1) as Array<string | undefined>));
       break;
+    case "PSYNC":
+      connection.write(commands.PSYNC(input.slice(1) as Array<string | undefined>));
     default:
       connection.write(serialazeSimpleError(`Unknown command: ${input[0]}`));
   }

@@ -3,7 +3,7 @@ import { parse, type RESPDataType } from "./parseRedisCommand";
 import { execCommand } from "./commands";
 import { RDBReader } from "./RDBReader";
 import { parseArgs } from "util";
-import { serialazeArray, serialazeBulkString } from "./serialazeRedisCommand";
+import { serialazeArray, serialazeBulkString, serialazeBulkStringArray } from "./serialazeRedisCommand";
 
 export const { values } = parseArgs({
   args: Bun.argv,
@@ -52,20 +52,25 @@ async function main() {
   server.listen(serverState.port, "127.0.0.1");
   console.log(`Redis server is listening on port ${serverState.port}...`);
 
+  let handShakeStep = 0;
+
   if (serverState.role === "slave") {
     const [host, port] = values.replicaof!.split(" ");
     const masterConnection: net.Socket = net.createConnection({ host, port: Number(port) });
     masterConnection.on("ready", () => {
+      handShakeStep++;
       masterConnection.write(serialazeArray(serialazeBulkString("PING")));
     });
     masterConnection.on("data", (data) => {
-      if (data.toString() === "+PONG\r\n") {
-        const command = serialazeBulkString("REPLCONF");
-
-        masterConnection.write(
-          serialazeArray(command, serialazeBulkString("listening-port"), serialazeBulkString(String(serverState.port)))
-        );
-        masterConnection.write(serialazeArray(command, serialazeBulkString("capa"), serialazeBulkString("psync2")));
+      if (handShakeStep === 1 && data.toString() === "+PONG\r\n") {
+        handShakeStep++;
+        masterConnection.write(serialazeBulkStringArray(["REPLCONF", "listening-port", String(serverState.port)]));
+      } else if (handShakeStep === 2 && data.toString() === "+OK\r\n") {
+        handShakeStep++;
+        masterConnection.write(serialazeBulkStringArray(["REPLCONF", "capa", "psync2"]));
+      } else if (handShakeStep === 3 && data.toString() === "+OK\r\n") {
+        handShakeStep++;
+        masterConnection.write(serialazeBulkStringArray(["PSYNC", "?", "-1"]));
       }
     });
   }
