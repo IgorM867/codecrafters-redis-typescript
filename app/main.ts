@@ -26,11 +26,18 @@ export const { values } = parseArgs({
 });
 
 export let db: Map<string, { value: string; expire: bigint | null }> = new Map();
-export const serverState = {
+export const serverState: {
+  port: number;
+  role: "master" | "slave";
+  master_replid: string;
+  master_repl_offset: number;
+  replicas_connections: net.Socket[];
+} = {
   port: Number(values.port) || 6379,
   role: values.replicaof ? "slave" : "master",
   master_replid: "8371b4fb1155b71f4a04d3e1bc3e18c4a990aeeb",
   master_repl_offset: 0,
+  replicas_connections: [],
 };
 main();
 
@@ -43,9 +50,7 @@ async function main() {
 
   const server: net.Server = net.createServer((connection: net.Socket) => {
     connection.on("data", (data) => {
-      const [input]: [RESPDataType[], number] = parse(data) as [RESPDataType[], number];
-
-      execCommand(input, connection);
+      execCommand(data, connection);
     });
   });
 

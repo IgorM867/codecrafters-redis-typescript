@@ -1,6 +1,6 @@
 import * as net from "net";
 import { db, serverState, values } from "./main";
-import type { RESPDataType } from "./parseRedisCommand";
+import { parse, type RESPDataType } from "./parseRedisCommand";
 import {
   serialazeArray,
   serialazeBulkString,
@@ -98,7 +98,9 @@ const commands = {
   },
 };
 
-export function execCommand(input: RESPDataType[], connection: net.Socket) {
+export function execCommand(data: Buffer, connection: net.Socket) {
+  const [input]: [RESPDataType[], number] = parse(data) as [RESPDataType[], number];
+
   switch ((input[0] as string).toUpperCase()) {
     case "PING":
       connection.write(commands.PING());
@@ -107,7 +109,14 @@ export function execCommand(input: RESPDataType[], connection: net.Socket) {
       connection.write(commands.ECHO(input[1] as string));
       break;
     case "SET":
-      connection.write(commands.SET(...(input.slice(1) as Array<string | undefined>)));
+      {
+        if (serverState.role === "master") {
+          connection.write(commands.SET(...(input.slice(1) as Array<string | undefined>)));
+          serverState.replicas_connections.forEach((con) => con.write(Uint8Array.from(data)));
+        } else if (serverState.role === "slave") {
+          commands.SET(...(input.slice(1) as Array<string | undefined>));
+        }
+      }
       break;
     case "GET":
       connection.write(commands.GET(input[1] as string | undefined));
@@ -134,6 +143,7 @@ export function execCommand(input: RESPDataType[], connection: net.Socket) {
       {
         connection.write(commands.PSYNC(input.slice(1) as Array<string | undefined>));
         sendRDBFile(connection);
+        serverState.replicas_connections.push(connection);
       }
       break;
     default:
