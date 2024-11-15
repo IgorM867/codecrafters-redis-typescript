@@ -58,6 +58,16 @@ async function main() {
     masterConnection.on("ready", () => {
       masterConnection.write(serialazeArray(serialazeBulkString("PING")));
     });
+    masterConnection.on("data", (data) => {
+      if (data.toString() === "+PONG\r\n") {
+        const command = serialazeBulkString("REPLCONF");
+
+        masterConnection.write(
+          serialazeArray(command, serialazeBulkString("listening-port"), serialazeBulkString(String(serverState.port)))
+        );
+        masterConnection.write(serialazeArray(command, serialazeBulkString("capa"), serialazeBulkString("psync2")));
+      }
+    });
   }
 }
 

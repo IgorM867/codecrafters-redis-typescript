@@ -90,6 +90,9 @@ const commands = {
 
     return serialazeBulkString(result);
   },
+  REPLCONF: (args: Array<string | undefined>) => {
+    return serialazeSimpleString("OK");
+  },
 };
 
 export function execCommand(input: RESPDataType[], connection: net.Socket) {
@@ -120,6 +123,9 @@ export function execCommand(input: RESPDataType[], connection: net.Socket) {
       break;
     case "INFO":
       connection.write(commands.INFO(input[1] as string | undefined));
+      break;
+    case "REPLCONF":
+      connection.write(commands.REPLCONF(input.slice(1) as Array<string | undefined>));
       break;
     default:
       connection.write(serialazeSimpleError(`Unknown command: ${input[0]}`));
