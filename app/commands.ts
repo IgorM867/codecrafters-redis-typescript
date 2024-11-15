@@ -94,7 +94,7 @@ const commands = {
     return serialazeSimpleString("OK");
   },
   PSYNC: (args: Array<string | undefined>) => {
-    return serialazeSimpleString("FULLRESYNC <REPL_ID> 0");
+    return serialazeSimpleString(`FULLRESYNC ${serverState.master_replid} ${serverState.master_repl_offset}`);
   },
 };
 
