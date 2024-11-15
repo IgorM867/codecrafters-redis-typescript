@@ -132,6 +132,7 @@ export function execCommand(input: RESPDataType[], connection: net.Socket) {
       break;
     case "PSYNC":
       connection.write(commands.PSYNC(input.slice(1) as Array<string | undefined>));
+      break;
     default:
       connection.write(serialazeSimpleError(`Unknown command: ${input[0]}`));
   }
