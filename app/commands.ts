@@ -1,6 +1,6 @@
 import * as net from "net";
 import { db, serverState, values } from "./main";
-import { parse, type RESPDataType } from "./parseRedisCommand";
+import { CommandParser } from "./parseRedisCommand";
 import {
   serialazeArray,
   serialazeBulkString,
@@ -8,18 +8,22 @@ import {
   serialazeSimpleString,
 } from "./serialazeRedisCommand";
 
+type CommandName = "PING" | "ECHO" | "SET" | "GET" | "CONFIG" | "KEYS" | "INFO" | "REPLCONF" | "PSYNC";
+
 const commands = {
   PING: () => serialazeSimpleString("PONG"),
-  ECHO: (arg: string) => serialazeBulkString(arg),
-  SET: (...args: Array<string | undefined>) => {
+  ECHO: (arg: string | undefined) => {
+    if (arg) {
+      return serialazeBulkString(arg);
+    } else {
+      return serialazeSimpleError("ERR wrong number of arguments for 'echo' command");
+    }
+  },
+  SET: (args: string[]) => {
+    if (args.length < 2) return serialazeSimpleError("ERR wrong number of arguments for 'set' command");
     const key = args[0];
     const value = args[1];
-    if (!key) {
-      return serialazeSimpleError("ERR wrong number of arguments for 'set' command");
-    }
-    if (!value) {
-      return serialazeSimpleError("ERR wrong number of arguments for 'set' command");
-    }
+
     if (args[2] && args[2].toUpperCase() === "PX") {
       if (!args[3]) return serialazeSimpleString("ERR syntax error");
 
@@ -42,6 +46,16 @@ const commands = {
     }
     return serialazeBulkString(entry.value);
   },
+  CONFIG: (args: string[]) => {
+    if (args.length === 0) return serialazeSimpleError("ERR wrong number of arguments for 'config' command");
+
+    switch (args[0].toUpperCase()) {
+      case "GET":
+        return commands.GET_CONFIG(args.at(1));
+      default:
+        return serialazeSimpleError(`Unknown CONFIG subcommand: ${args[1]}`);
+    }
+  },
   GET_CONFIG: (arg: string | undefined) => {
     if (!arg) return serialazeSimpleError("ERR wrong number of arguments for 'config|get' command");
 
@@ -51,7 +65,7 @@ const commands = {
       case "dbfilename":
         return serialazeArray(serialazeBulkString("dbfilename"), serialazeBulkString(values.dbfilename || ""));
       default:
-        return serialazeSimpleError(`Invalid parameter: '${arg}'`);
+        return serialazeArray();
     }
   },
   KEYS: (arg: string | undefined) => {
@@ -90,65 +104,67 @@ const commands = {
 
     return serialazeBulkString(result);
   },
-  REPLCONF: (args: Array<string | undefined>) => {
+  REPLCONF: (args: string[]) => {
     return serialazeSimpleString("OK");
   },
-  PSYNC: (args: Array<string | undefined>) => {
+  PSYNC: (args: string[]) => {
     return serialazeSimpleString(`FULLRESYNC ${serverState.master_replid} ${serverState.master_repl_offset}`);
   },
 };
 
 export function execCommand(data: Buffer, connection: net.Socket) {
-  const [input]: [RESPDataType[], number] = parse(data) as [RESPDataType[], number];
+  const parser = new CommandParser(data);
 
-  switch ((input[0] as string).toUpperCase()) {
-    case "PING":
-      connection.write(commands.PING());
-      break;
-    case "ECHO":
-      connection.write(commands.ECHO(input[1] as string));
-      break;
-    case "SET":
-      {
-        if (serverState.role === "master") {
-          connection.write(commands.SET(...(input.slice(1) as Array<string | undefined>)));
-          serverState.replicas_connections.forEach((con) => con.write(Uint8Array.from(data)));
-        } else if (serverState.role === "slave") {
-          commands.SET(...(input.slice(1) as Array<string | undefined>));
-        }
-      }
-      break;
-    case "GET":
-      connection.write(commands.GET(input[1] as string | undefined));
-      break;
-    case "CONFIG":
-      switch ((input[1] as string).toUpperCase()) {
-        case "GET":
-          connection.write(commands.GET_CONFIG(input[2] as string | undefined));
-          break;
-        default:
-          connection.write(serialazeSimpleError(`Unknown CONFIG command: ${input[1]}`));
-      }
-      break;
-    case "KEYS":
-      connection.write(commands.KEYS(input[1] as string | undefined));
-      break;
-    case "INFO":
-      connection.write(commands.INFO(input[1] as string | undefined));
-      break;
-    case "REPLCONF":
-      connection.write(commands.REPLCONF(input.slice(1) as Array<string | undefined>));
-      break;
-    case "PSYNC":
-      {
-        connection.write(commands.PSYNC(input.slice(1) as Array<string | undefined>));
-        sendRDBFile(connection);
-        serverState.replicas_connections.push(connection);
-      }
-      break;
-    default:
-      connection.write(serialazeSimpleError(`Unknown command: ${input[0]}`));
+  const [err, results] = parser.parse();
+  if (err) {
+    connection.write(serialazeSimpleError(err.message));
+    return;
   }
+
+  results.forEach((command) => {
+    switch (command.name.toUpperCase() as CommandName) {
+      case "PING":
+        connection.write(commands.PING());
+        break;
+      case "ECHO":
+        connection.write(commands.ECHO(command.args.at(0)));
+        break;
+      case "SET":
+        {
+          if (serverState.role === "master") {
+            connection.write(commands.SET(command.args));
+            serverState.replicas_connections.forEach((con) => con.write(Uint8Array.from(data)));
+          } else if (serverState.role === "slave") {
+            commands.SET(command.args);
+          }
+        }
+        break;
+      case "GET":
+        connection.write(commands.GET(command.args.at(0)));
+        break;
+      case "CONFIG":
+        connection.write(commands.CONFIG(command.args));
+        break;
+      case "KEYS":
+        connection.write(commands.KEYS(command.args.at(0)));
+        break;
+      case "INFO":
+        connection.write(commands.INFO(command.args.at(0)));
+        break;
+      case "REPLCONF":
+        connection.write(commands.REPLCONF(command.args));
+        break;
+      case "PSYNC":
+        {
+          connection.write(commands.PSYNC(command.args));
+          sendRDBFile(connection);
+          serverState.replicas_connections.push(connection);
+        }
+        break;
+      default:
+        connection.write(serialazeSimpleError(`Unknown command: ${command.name}`));
+    }
+  });
 }
 function sendRDBFile(con: net.Socket) {
   const emptyRDBFile =

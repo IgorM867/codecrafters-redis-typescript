@@ -1,71 +1,83 @@
-type BulkString = string;
-type SimpleString = string;
-export type RESPDataType = Array<RESPDataType> | BulkString | SimpleString;
-
-const RESP_TYPES: Record<number, RESPDataType> = {
-  36: "BulkString", // $
-  42: "Array", // *
-  43: "SimpleString", //+
+type Command = {
+  name: string;
+  args: string[];
 };
 
-export function parse(data: Buffer, currentByte: number = 0): [RESPDataType, number] {
-  const RESPDataType = RESP_TYPES[data[currentByte]];
+export class CommandParser {
+  private currentByte: number = 0;
+  constructor(private data: Buffer) {}
 
-  switch (RESPDataType) {
-    case "Array":
-      return parseArray(data, ++currentByte);
-    case "BulkString":
-      return parseBulkString(data, ++currentByte);
-    case "SimpleString":
-      return parseSimpleString(data, ++currentByte);
-    default:
-      throw Error("Unexpected data type");
+  parse(): [Error | null, Command[]] {
+    try {
+      const commands: Command[] = [];
+
+      while (!this.isEnd()) {
+        if (this.readByte() !== 42) throw Error("Expecting array"); // 42 - '*'
+        const array = this.parseArray();
+        commands.push({ name: array[0].toUpperCase(), args: array.slice(1) });
+      }
+
+      return [null, commands];
+    } catch (error) {
+      return [error as Error, []];
+    }
   }
-}
-function parseArray(data: Buffer, currentByte: number): [Array<RESPDataType>, number] {
-  const [length, lengthEnd] = parseElement(data, currentByte);
-  currentByte = lengthEnd;
-  const arrayElements: RESPDataType[] = [];
+  private parseArray(): string[] {
+    const length = this.parseElement();
+    const arrayElements: string[] = [];
 
-  for (let i = 0; i < Number(length); i++) {
-    const [element, elementEnd] = parse(data, currentByte);
-    currentByte = elementEnd;
-    arrayElements.push(element);
+    for (let i = 0; i < Number(length); i++) {
+      const element = this.parseString();
+      arrayElements.push(element);
+    }
+
+    return arrayElements;
   }
+  private parseString(): string {
+    const byte = this.readByte();
 
-  return [arrayElements, currentByte];
-}
-function parseBulkString(data: Buffer, currentByte: number): [BulkString, number] {
-  const [length, lengthEnd] = parseElement(data, currentByte);
-  currentByte = lengthEnd;
+    if (byte === 36) {
+      const length = Number(this.parseElement());
+      const data = this.readBytes(length);
 
-  let [value, valueEnd] = parseElement(data, currentByte);
-  currentByte = valueEnd;
+      this.readBytes(2); // \r\n
 
-  if (value.length !== Number(length)) {
-    throw Error("Invalid length of the string");
+      return data.toString();
+      //bulk string
+    } else if (byte === 43) {
+      return this.parseElement();
+      //simple string
+    } else {
+      throw Error("Expecting string data type identifier");
+    }
   }
+  private parseElement(): string {
+    let value = String.fromCharCode(this.readByte());
 
-  return [value, currentByte];
-}
-function parseSimpleString(data: Buffer, currentByte: number): [SimpleString, number] {
-  const [str, strEnd] = parseElement(data, currentByte);
-  currentByte = strEnd;
+    while (this.peekByte() !== 13 && !this.isEnd()) {
+      value += String.fromCharCode(this.readByte());
+    }
+    this.readByte();
+    if (this.readByte() !== 10) {
+      throw Error("Expecting \\n character after \\r");
+    }
 
-  return [str, currentByte];
-}
-function parseElement(data: Buffer, currentByte: number): [string, number] {
-  let value = String.fromCharCode(data[currentByte]);
-  currentByte++;
-
-  while (data[currentByte] !== 13 && currentByte <= data.length) {
-    value += String.fromCharCode(data[currentByte]);
-    currentByte++;
+    return value;
   }
-  if (data[++currentByte] !== 10) {
-    throw Error("Expecting \\n character after \\r");
+  private readBytes(offset: number) {
+    const data = this.data.subarray(this.currentByte, this.currentByte + offset);
+    this.currentByte += offset;
+    return data;
   }
-  currentByte++;
-
-  return [value, currentByte];
+  private readByte() {
+    const byte = this.data[this.currentByte];
+    this.currentByte++;
+    return byte;
+  }
+  private peekByte() {
+    return this.data[this.currentByte];
+  }
+  private isEnd() {
+    return this.currentByte >= this.data.length;
+  }
 }

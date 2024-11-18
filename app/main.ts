@@ -1,5 +1,4 @@
 import * as net from "net";
-import { parse, type RESPDataType } from "./parseRedisCommand";
 import { execCommand } from "./commands";
 import { RDBReader } from "./RDBReader";
 import { parseArgs } from "util";
@@ -76,6 +75,14 @@ async function main() {
       } else if (handShakeStep === 3 && data.toString() === "+OK\r\n") {
         handShakeStep++;
         masterConnection.write(serialazeBulkStringArray(["PSYNC", "?", "-1"]));
+      } else if (handShakeStep === 4) {
+        handShakeStep++;
+        //gets FULLRESYNC from the master
+      } else if (handShakeStep === 5) {
+        handShakeStep++;
+        //gets file from the master
+      } else {
+        execCommand(data, masterConnection);
       }
     });
   }
