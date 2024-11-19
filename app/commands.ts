@@ -5,11 +5,12 @@ import {
   serialazeArray,
   serialazeBulkString,
   serialazeBulkStringArray,
+  serialazeInteger,
   serialazeSimpleError,
   serialazeSimpleString,
 } from "./serialazeRedisCommand";
 
-type CommandName = "PING" | "ECHO" | "SET" | "GET" | "CONFIG" | "KEYS" | "INFO" | "REPLCONF" | "PSYNC";
+type CommandName = "PING" | "ECHO" | "SET" | "GET" | "CONFIG" | "KEYS" | "INFO" | "REPLCONF" | "PSYNC" | "WAIT";
 
 const commands = {
   PING: () => serialazeSimpleString("PONG"),
@@ -117,6 +118,9 @@ const commands = {
   PSYNC: (args: string[]) => {
     return serialazeSimpleString(`FULLRESYNC ${serverState.master_replid} ${serverState.master_repl_offset}`);
   },
+  WAIT: (args: string[]) => {
+    return serialazeInteger(0);
+  },
 };
 
 const writeCommands = ["SET"];
@@ -161,6 +165,9 @@ export function execCommand(data: Buffer, connection: net.Socket, fromMaster = f
         break;
       case "PSYNC":
         response = commands.PSYNC(command.args);
+        break;
+      case "WAIT":
+        response = commands.WAIT(command.args);
         break;
       default:
         response = serialazeSimpleError(`Unknown command: ${command.name}`);

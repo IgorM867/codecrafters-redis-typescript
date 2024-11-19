@@ -1,3 +1,7 @@
+export function serialazeInteger(value: number) {
+  return new Uint8Array(Buffer.from(`:${value.toString()}\r\n`));
+}
+
 export function serialazeBulkString(value: string) {
   if (value.length === 0) {
     const str = `$-1\r\n`;
