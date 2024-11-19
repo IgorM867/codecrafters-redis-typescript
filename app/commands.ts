@@ -4,6 +4,7 @@ import { CommandParser } from "./parseRedisCommand";
 import {
   serialazeArray,
   serialazeBulkString,
+  serialazeBulkStringArray,
   serialazeSimpleError,
   serialazeSimpleString,
 } from "./serialazeRedisCommand";
@@ -105,6 +106,12 @@ const commands = {
     return serialazeBulkString(result);
   },
   REPLCONF: (args: string[]) => {
+    if (serverState.role === "slave" && args[0].toUpperCase() === "GETACK") {
+      if (args[1].toUpperCase() !== "*") return serialazeSimpleString("ERR syntax error");
+
+      return serialazeBulkStringArray(["REPLCONF", "ACK", String(0)]);
+    }
+
     return serialazeSimpleString("OK");
   },
   PSYNC: (args: string[]) => {
