@@ -119,7 +119,7 @@ const commands = {
     return serialazeSimpleString(`FULLRESYNC ${serverState.master_replid} ${serverState.master_repl_offset}`);
   },
   WAIT: (args: string[]) => {
-    return serialazeInteger(0);
+    return serialazeInteger(serverState.replicas_connections.length);
   },
 };
 
