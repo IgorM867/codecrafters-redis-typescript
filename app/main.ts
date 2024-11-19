@@ -3,6 +3,16 @@ import { execCommand } from "./commands";
 import { RDBReader } from "./RDBReader";
 import { parseArgs } from "util";
 import { serialazeArray, serialazeBulkString, serialazeBulkStringArray } from "./serialazeRedisCommand";
+import { CommandParser } from "./parseRedisCommand";
+
+enum HandshapeStep {
+  PING = 1,
+  REPLCONF,
+  PSYNC,
+  FULLRESYNC,
+  FILE_TRANSFER,
+  DONE,
+}
 
 export const { values } = parseArgs({
   args: Bun.argv,
@@ -56,33 +66,58 @@ async function main() {
   server.listen(serverState.port, "127.0.0.1");
   console.log(`Redis server is listening on port ${serverState.port}...`);
 
-  let handShakeStep = 0;
-
   if (serverState.role === "slave") {
     const [host, port] = values.replicaof!.split(" ");
     const masterConnection: net.Socket = net.createConnection({ host, port: Number(port) });
     masterConnection.on("ready", () => {
-      handShakeStep++;
       masterConnection.write(serialazeArray(serialazeBulkString("PING")));
     });
+
+    let handshakeStep = HandshapeStep.PING;
+
     masterConnection.on("data", (data) => {
-      if (handShakeStep === 1 && data.toString() === "+PONG\r\n") {
-        handShakeStep++;
-        masterConnection.write(serialazeBulkStringArray(["REPLCONF", "listening-port", String(serverState.port)]));
-      } else if (handShakeStep === 2 && data.toString() === "+OK\r\n") {
-        handShakeStep++;
-        masterConnection.write(serialazeBulkStringArray(["REPLCONF", "capa", "psync2"]));
-      } else if (handShakeStep === 3 && data.toString() === "+OK\r\n") {
-        handShakeStep++;
-        masterConnection.write(serialazeBulkStringArray(["PSYNC", "?", "-1"]));
-      } else if (handShakeStep === 4) {
-        handShakeStep++;
-        //gets FULLRESYNC from the master
-      } else if (handShakeStep === 5) {
-        handShakeStep++;
-        //gets file from the master
-      } else {
+      if (handshakeStep === HandshapeStep.DONE) {
         execCommand(data, masterConnection);
+      } else {
+        if (handshakeStep === HandshapeStep.PING && data.toString() === "+PONG\r\n") {
+          masterConnection.write(serialazeBulkStringArray(["REPLCONF", "listening-port", String(serverState.port)]));
+          handshakeStep = HandshapeStep.REPLCONF;
+          return;
+        }
+        if (handshakeStep === HandshapeStep.REPLCONF && data.toString() === "+OK\r\n") {
+          masterConnection.write(serialazeBulkStringArray(["REPLCONF", "capa", "psync2"]));
+          handshakeStep = HandshapeStep.PSYNC;
+          return;
+        }
+        if (handshakeStep === HandshapeStep.PSYNC && data.toString() === "+OK\r\n") {
+          masterConnection.write(serialazeBulkStringArray(["PSYNC", "?", "-1"]));
+          handshakeStep = HandshapeStep.FULLRESYNC;
+          return;
+        }
+        const parser = new CommandParser(data);
+        while (!parser.isEnd()) {
+          if (handshakeStep === HandshapeStep.FULLRESYNC) {
+            parser.parseString();
+            handshakeStep = HandshapeStep.FILE_TRANSFER;
+            continue;
+          } else if (handshakeStep === HandshapeStep.FILE_TRANSFER) {
+            // readfile
+            const length = Number(parser.parseElement().slice(1));
+
+            let str = parser.peekBytes(length).toString("utf-8");
+            let i = length;
+
+            while (str.length !== length && i < data.length) {
+              str = parser.peekBytes(i).toString("utf-8");
+              i++;
+            }
+            parser.readBytes(i - 2);
+            handshakeStep = HandshapeStep.DONE;
+          } else if (handshakeStep === HandshapeStep.DONE) {
+            execCommand(parser.peekBytes(Infinity), masterConnection);
+            break;
+          }
+        }
       }
     });
   }

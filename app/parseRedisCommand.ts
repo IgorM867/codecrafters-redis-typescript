@@ -12,7 +12,7 @@ export class CommandParser {
       const commands: Command[] = [];
 
       while (!this.isEnd()) {
-        if (this.readByte() !== 42) throw Error("Expecting array"); // 42 - '*'
+        if (this.readByte() !== 42) throw Error("Expecting array"); // 42 -> '*'
         const array = this.parseArray();
         commands.push({ name: array[0].toUpperCase(), args: array.slice(1) });
       }
@@ -22,18 +22,7 @@ export class CommandParser {
       return [error as Error, []];
     }
   }
-  private parseArray(): string[] {
-    const length = this.parseElement();
-    const arrayElements: string[] = [];
-
-    for (let i = 0; i < Number(length); i++) {
-      const element = this.parseString();
-      arrayElements.push(element);
-    }
-
-    return arrayElements;
-  }
-  private parseString(): string {
+  parseString(): string {
     const byte = this.readByte();
 
     if (byte === 36) {
@@ -51,7 +40,7 @@ export class CommandParser {
       throw Error("Expecting string data type identifier");
     }
   }
-  private parseElement(): string {
+  parseElement(): string {
     let value = String.fromCharCode(this.readByte());
 
     while (this.peekByte() !== 13 && !this.isEnd()) {
@@ -64,10 +53,27 @@ export class CommandParser {
 
     return value;
   }
-  private readBytes(offset: number) {
+  isEnd() {
+    return this.currentByte >= this.data.length;
+  }
+  readBytes(offset: number) {
     const data = this.data.subarray(this.currentByte, this.currentByte + offset);
     this.currentByte += offset;
     return data;
+  }
+  peekBytes(offset: number) {
+    return this.data.subarray(this.currentByte, this.currentByte + offset);
+  }
+  private parseArray(): string[] {
+    const length = this.parseElement();
+    const arrayElements: string[] = [];
+
+    for (let i = 0; i < Number(length); i++) {
+      const element = this.parseString();
+      arrayElements.push(element);
+    }
+
+    return arrayElements;
   }
   private readByte() {
     const byte = this.data[this.currentByte];
@@ -76,8 +82,5 @@ export class CommandParser {
   }
   private peekByte() {
     return this.data[this.currentByte];
-  }
-  private isEnd() {
-    return this.currentByte >= this.data.length;
   }
 }
