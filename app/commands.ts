@@ -109,7 +109,7 @@ const commands = {
     if (serverState.role === "slave" && args[0].toUpperCase() === "GETACK") {
       if (args[1].toUpperCase() !== "*") return serialazeSimpleString("ERR syntax error");
 
-      return serialazeBulkStringArray(["REPLCONF", "ACK", String(0)]);
+      return serialazeBulkStringArray(["REPLCONF", "ACK", String(serverState.master_repl_offset)]);
     }
 
     return serialazeSimpleString("OK");
@@ -119,7 +119,9 @@ const commands = {
   },
 };
 
-export function execCommand(data: Buffer, connection: net.Socket) {
+const writeCommands = ["SET"];
+
+export function execCommand(data: Buffer, connection: net.Socket, fromMaster = false) {
   const parser = new CommandParser(data);
 
   const [err, results] = parser.parse();
@@ -128,48 +130,58 @@ export function execCommand(data: Buffer, connection: net.Socket) {
     return;
   }
 
+  let response: Uint8Array = new Uint8Array();
+
   results.forEach((command) => {
-    switch (command.name.toUpperCase() as CommandName) {
+    const commandName = command.name.toUpperCase();
+    switch (commandName as CommandName) {
       case "PING":
-        connection.write(commands.PING());
+        response = commands.PING();
         break;
       case "ECHO":
-        connection.write(commands.ECHO(command.args.at(0)));
+        response = commands.ECHO(command.args.at(0));
         break;
       case "SET":
-        {
-          if (serverState.role === "master") {
-            connection.write(commands.SET(command.args));
-            serverState.replicas_connections.forEach((con) => con.write(Uint8Array.from(data)));
-          } else if (serverState.role === "slave") {
-            commands.SET(command.args);
-          }
-        }
+        response = commands.SET(command.args);
         break;
       case "GET":
-        connection.write(commands.GET(command.args.at(0)));
+        response = commands.GET(command.args.at(0));
         break;
       case "CONFIG":
-        connection.write(commands.CONFIG(command.args));
+        response = commands.CONFIG(command.args);
         break;
       case "KEYS":
-        connection.write(commands.KEYS(command.args.at(0)));
+        response = commands.KEYS(command.args.at(0));
         break;
       case "INFO":
-        connection.write(commands.INFO(command.args.at(0)));
+        response = commands.INFO(command.args.at(0));
         break;
       case "REPLCONF":
-        connection.write(commands.REPLCONF(command.args));
+        response = commands.REPLCONF(command.args);
         break;
       case "PSYNC":
-        {
-          connection.write(commands.PSYNC(command.args));
-          sendRDBFile(connection);
-          serverState.replicas_connections.push(connection);
-        }
+        response = commands.PSYNC(command.args);
         break;
       default:
-        connection.write(serialazeSimpleError(`Unknown command: ${command.name}`));
+        response = serialazeSimpleError(`Unknown command: ${command.name}`);
+    }
+    if (serverState.role === "master") {
+      connection.write(response);
+      if (commandName === "PSYNC") {
+        sendRDBFile(connection);
+        serverState.replicas_connections.push(connection);
+      }
+      if (writeCommands.includes(commandName)) {
+        serverState.replicas_connections.forEach((con) => con.write(Uint8Array.from(data)));
+      }
+    }
+    if (serverState.role === "slave") {
+      if (commandName === "REPLCONF" || !fromMaster) {
+        connection.write(response);
+      }
+      if (fromMaster) {
+        serverState.master_repl_offset += command.length;
+      }
     }
   });
 }

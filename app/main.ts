@@ -77,7 +77,7 @@ async function main() {
 
     masterConnection.on("data", (data) => {
       if (handshakeStep === HandshapeStep.DONE) {
-        execCommand(data, masterConnection);
+        execCommand(data, masterConnection, true);
       } else {
         if (handshakeStep === HandshapeStep.PING && data.toString() === "+PONG\r\n") {
           masterConnection.write(serialazeBulkStringArray(["REPLCONF", "listening-port", String(serverState.port)]));
@@ -114,7 +114,7 @@ async function main() {
             parser.readBytes(i - 2);
             handshakeStep = HandshapeStep.DONE;
           } else if (handshakeStep === HandshapeStep.DONE) {
-            execCommand(parser.peekBytes(Infinity), masterConnection);
+            execCommand(parser.peekBytes(Infinity), masterConnection, true);
             break;
           }
         }

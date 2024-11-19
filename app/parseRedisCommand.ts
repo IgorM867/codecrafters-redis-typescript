@@ -1,10 +1,12 @@
 type Command = {
   name: string;
   args: string[];
+  length: number;
 };
 
 export class CommandParser {
   private currentByte: number = 0;
+  private lastCommandEnd: number = 0;
   constructor(private data: Buffer) {}
 
   parse(): [Error | null, Command[]] {
@@ -14,7 +16,12 @@ export class CommandParser {
       while (!this.isEnd()) {
         if (this.readByte() !== 42) throw Error("Expecting array"); // 42 -> '*'
         const array = this.parseArray();
-        commands.push({ name: array[0].toUpperCase(), args: array.slice(1) });
+        commands.push({
+          name: array[0].toUpperCase(),
+          args: array.slice(1),
+          length: this.currentByte - this.lastCommandEnd,
+        });
+        this.lastCommandEnd = this.currentByte;
       }
 
       return [null, commands];
