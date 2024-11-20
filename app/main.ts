@@ -4,6 +4,7 @@ import { RDBReader } from "./RDBReader";
 import { parseArgs } from "util";
 import { serialazeArray, serialazeBulkString, serialazeBulkStringArray } from "./serialazeRedisCommand";
 import { CommandParser } from "./parseRedisCommand";
+import { logFormattedData } from "./util";
 
 enum HandshapeStep {
   PING = 1,
@@ -59,6 +60,7 @@ async function main() {
 
   const server: net.Server = net.createServer((connection: net.Socket) => {
     connection.on("data", (data) => {
+      logFormattedData("received", Uint8Array.from(data));
       execCommand(data, connection);
     });
   });
@@ -76,6 +78,8 @@ async function main() {
     let handshakeStep = HandshapeStep.PING;
 
     masterConnection.on("data", (data) => {
+      logFormattedData("received", Uint8Array.from(data));
+
       if (handshakeStep === HandshapeStep.DONE) {
         execCommand(data, masterConnection, true);
       } else {

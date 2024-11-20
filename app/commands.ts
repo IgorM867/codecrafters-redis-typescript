@@ -9,8 +9,23 @@ import {
   serialazeSimpleError,
   serialazeSimpleString,
 } from "./serialazeRedisCommand";
+import { logFormattedData } from "./util";
 
-type CommandName = "PING" | "ECHO" | "SET" | "GET" | "CONFIG" | "KEYS" | "INFO" | "REPLCONF" | "PSYNC" | "WAIT";
+export type CommandName = "PING" | "ECHO" | "SET" | "GET" | "CONFIG" | "KEYS" | "INFO" | "REPLCONF" | "PSYNC" | "WAIT";
+
+const waitState = {
+  isWaiting: false,
+  acknowledgeGoal: 0,
+  acknowledgeCount: 0,
+  resolvePromise: () => {},
+  reset() {
+    this.isWaiting = false;
+    this.acknowledgeGoal = 0;
+    this.acknowledgeCount = 0;
+    this.resolvePromise = () => {};
+  },
+};
+const noResponseQueue: net.Socket[] = [];
 
 const commands = {
   PING: () => serialazeSimpleString("PONG"),
@@ -112,6 +127,15 @@ const commands = {
 
       return serialazeBulkStringArray(["REPLCONF", "ACK", String(serverState.master_repl_offset)]);
     }
+    if (serverState.role === "master" && args[0].toUpperCase() === "ACK" && waitState.isWaiting) {
+      waitState.acknowledgeCount++;
+
+      if (waitState.acknowledgeCount >= waitState.acknowledgeGoal) {
+        waitState.resolvePromise();
+      }
+
+      return;
+    }
 
     return serialazeSimpleString("OK");
   },
@@ -119,13 +143,43 @@ const commands = {
     return serialazeSimpleString(`FULLRESYNC ${serverState.master_replid} ${serverState.master_repl_offset}`);
   },
   WAIT: (args: string[]) => {
-    return serialazeInteger(serverState.replicas_connections.length);
+    const acknowledgeGoal = Number(args[0]);
+    const timeout = Number(args[1]);
+
+    if (acknowledgeGoal <= 0) {
+      return serialazeInteger(0);
+    }
+
+    if (serverState.master_repl_offset === 0) {
+      return serialazeInteger(serverState.replicas_connections.length);
+    }
+
+    return new Promise<Uint8Array>((res) => {
+      waitState.isWaiting = true;
+      waitState.acknowledgeGoal = acknowledgeGoal;
+      waitState.acknowledgeCount = 0;
+      waitState.resolvePromise = () => res(serialazeInteger(waitState.acknowledgeCount));
+
+      propagateToReplicas(serialazeBulkStringArray(["REPLCONF", "GETACK", "*"]), true);
+
+      const timeoutId = setTimeout(() => {
+        res(serialazeInteger(waitState.acknowledgeCount));
+        waitState.reset();
+      }, timeout);
+
+      const originalResolve = waitState.resolvePromise;
+      waitState.resolvePromise = () => {
+        clearTimeout(timeoutId);
+        originalResolve();
+        waitState.reset();
+      };
+    });
   },
 };
 
 const writeCommands = ["SET"];
 
-export function execCommand(data: Buffer, connection: net.Socket, fromMaster = false) {
+export async function execCommand(data: Buffer, connection: net.Socket, fromMaster = false) {
   const parser = new CommandParser(data);
 
   const [err, results] = parser.parse();
@@ -134,10 +188,10 @@ export function execCommand(data: Buffer, connection: net.Socket, fromMaster = f
     return;
   }
 
-  let response: Uint8Array = new Uint8Array();
+  let response: Uint8Array | Promise<Uint8Array> | undefined = new Uint8Array();
 
-  results.forEach((command) => {
-    const commandName = command.name.toUpperCase();
+  for (const command of results) {
+    const commandName = command.name.toUpperCase() as CommandName;
     switch (commandName as CommandName) {
       case "PING":
         response = commands.PING();
@@ -166,31 +220,43 @@ export function execCommand(data: Buffer, connection: net.Socket, fromMaster = f
       case "PSYNC":
         response = commands.PSYNC(command.args);
         break;
-      case "WAIT":
+      case "WAIT": {
         response = commands.WAIT(command.args);
         break;
+      }
       default:
         response = serialazeSimpleError(`Unknown command: ${command.name}`);
     }
+    let resolvedResponse = await Promise.resolve(response);
+    if (resolvedResponse === undefined) return;
+
     if (serverState.role === "master") {
-      connection.write(response);
+      if (noResponseQueue.includes(connection)) {
+        logFormattedData("stop response", resolvedResponse);
+        noResponseQueue.splice(noResponseQueue.indexOf(connection), 1);
+        return;
+      }
+
+      logFormattedData("sending", resolvedResponse);
+      connection.write(resolvedResponse);
       if (commandName === "PSYNC") {
         sendRDBFile(connection);
         serverState.replicas_connections.push(connection);
       }
       if (writeCommands.includes(commandName)) {
-        serverState.replicas_connections.forEach((con) => con.write(Uint8Array.from(data)));
+        propagateToReplicas(Uint8Array.from(data));
       }
     }
     if (serverState.role === "slave") {
       if (commandName === "REPLCONF" || !fromMaster) {
-        connection.write(response);
+        logFormattedData("sending", resolvedResponse);
+        connection.write(resolvedResponse);
       }
       if (fromMaster) {
         serverState.master_repl_offset += command.length;
       }
     }
-  });
+  }
 }
 function sendRDBFile(con: net.Socket) {
   const emptyRDBFile =
@@ -201,4 +267,13 @@ function sendRDBFile(con: net.Socket) {
   const message = Uint8Array.from(Buffer.concat([length, buffer]));
 
   con.write(message);
+}
+function propagateToReplicas(data: Uint8Array, noReply: boolean = false) {
+  logFormattedData("propagates", data);
+
+  if (noReply) {
+    noResponseQueue.push(...serverState.replicas_connections);
+  }
+  serverState.replicas_connections.forEach((con) => con.write(data));
+  serverState.master_repl_offset += data.length;
 }

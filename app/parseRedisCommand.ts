@@ -1,5 +1,7 @@
+import type { CommandName } from "./commands";
+
 type Command = {
-  name: string;
+  name: CommandName;
   args: string[];
   length: number;
 };
@@ -17,7 +19,7 @@ export class CommandParser {
         if (this.readByte() !== 42) throw Error("Expecting array"); // 42 -> '*'
         const array = this.parseArray();
         commands.push({
-          name: array[0].toUpperCase(),
+          name: array[0].toUpperCase() as CommandName,
           args: array.slice(1),
           length: this.currentByte - this.lastCommandEnd,
         });
