@@ -11,7 +11,18 @@ import {
 } from "./serialazeRedisCommand";
 import { logFormattedData } from "./util";
 
-export type CommandName = "PING" | "ECHO" | "SET" | "GET" | "CONFIG" | "KEYS" | "INFO" | "REPLCONF" | "PSYNC" | "WAIT";
+export type CommandName =
+  | "PING"
+  | "ECHO"
+  | "SET"
+  | "GET"
+  | "CONFIG"
+  | "KEYS"
+  | "INFO"
+  | "REPLCONF"
+  | "PSYNC"
+  | "WAIT"
+  | "TYPE";
 
 const waitState = {
   isWaiting: false,
@@ -175,6 +186,14 @@ const commands = {
       };
     });
   },
+  TYPE: (key: string | undefined) => {
+    if (!key) return serialazeSimpleError("ERR wrong number of arguments for 'type' command");
+    const value = db.get(key);
+
+    if (!value) return serialazeSimpleString("none");
+
+    return serialazeSimpleString("string");
+  },
 };
 
 const writeCommands = ["SET"];
@@ -224,6 +243,9 @@ export async function execCommand(data: Buffer, connection: net.Socket, fromMast
         response = commands.WAIT(command.args);
         break;
       }
+      case "TYPE":
+        response = commands.TYPE(command.args.at(0));
+        break;
       default:
         response = serialazeSimpleError(`Unknown command: ${command.name}`);
     }
