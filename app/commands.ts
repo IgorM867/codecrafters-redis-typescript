@@ -1,5 +1,5 @@
 import * as net from "net";
-import { db, serverState, values, type DBValue } from "./main";
+import { db, serverState, values } from "./main";
 import { CommandParser } from "./parseRedisCommand";
 import {
   serialazeArray,
@@ -211,34 +211,42 @@ const commands = {
 
       values.push({ key, value });
     }
+    const [timeStamp, seqNumber] = entryId.split("-");
 
-    const [time, seqNumber] = entryId.split("-");
-    if (Number(time) < 0 || (Number(time) === 0 && Number(seqNumber) <= 0)) {
-      return serialazeSimpleError("ERR The ID specified in XADD must be greater than 0-0");
-    }
+    let err = checkEntryId(entryId, "0-0");
+    if (err) return serialazeSimpleError(err);
 
-    if (db.has(streamKey)) {
-      const dbEntry = db.get(streamKey)!;
-      if (dbEntry.type === "string") return serialazeSimpleError("Err wrong number of arguments for 'XADD' command");
-
-      const [lastTime, lastSeqNumber] = dbEntry.lastId.split("-");
-      const [time, seqNumber] = entryId.split("-");
-
-      if (Number(time) < Number(lastTime)) {
-        return serialazeSimpleError("ERR The ID specified in XADD is equal or smaller than the target stream top item");
-      }
-      if (Number(time) === Number(lastTime) && Number(seqNumber) <= Number(lastSeqNumber)) {
-        return serialazeSimpleError("ERR The ID specified in XADD is equal or smaller than the target stream top item");
+    if (!db.has(streamKey)) {
+      let newEntryId = entryId;
+      if (seqNumber === "*") {
+        const newSeqNum = timeStamp === "0" ? "1" : "0";
+        newEntryId = `${timeStamp}-${newSeqNum}`;
       }
 
-      dbEntry.value.set(entryId, values);
-      dbEntry.lastId = entryId;
-
-      return serialazeSimpleString(entryId);
+      db.set(streamKey, { type: "stream", value: new Map().set(newEntryId, values), lastId: newEntryId });
+      return serialazeSimpleString(newEntryId);
     }
 
-    db.set(streamKey, { type: "stream", value: new Map().set(entryId, values), lastId: entryId });
-    return serialazeSimpleString(entryId);
+    const dbEntry = db.get(streamKey)!;
+    if (dbEntry.type === "string") return serialazeSimpleError("Err wrong number of arguments for 'XADD' command");
+
+    err = checkEntryId(entryId, dbEntry.lastId);
+    if (err) return serialazeSimpleError(err);
+
+    let newEntryId = entryId;
+    if (seqNumber === "*") {
+      const [lastTimeStamp, lastSeqNumber] = dbEntry.lastId.split("-");
+      let newSeqNum = 0;
+      if (timeStamp === lastTimeStamp) {
+        newSeqNum = Number(lastSeqNumber) + 1;
+      }
+      newEntryId = `${timeStamp}-${newSeqNum}`;
+    }
+
+    dbEntry.value.set(newEntryId, values);
+    dbEntry.lastId = newEntryId;
+
+    return serialazeSimpleString(newEntryId);
   },
 };
 
@@ -347,4 +355,22 @@ function propagateToReplicas(data: Uint8Array, noReply: boolean = false) {
   }
   serverState.replicas_connections.forEach((con) => con.write(data));
   serverState.master_repl_offset += data.length;
+}
+function checkEntryId(newEntryId: string, lastEntryId: string): string | null {
+  const [time, seqNumber] = newEntryId.split("-");
+  const [lastTime, lastSeqNumber] = lastEntryId.split("-").map(Number);
+
+  if (time === "*" && seqNumber === "*") return null;
+
+  if (seqNumber === "*" && Number(time) < lastTime) {
+    return "ERR The ID specified in XADD is equal or smaller than the target stream top item";
+  }
+  if (Number(time) < 0 || (Number(time) === 0 && Number(seqNumber) <= 0)) {
+    return "ERR The ID specified in XADD must be greater than 0-0";
+  }
+  if (Number(time) < lastTime || (Number(time) === lastTime && Number(seqNumber) <= lastSeqNumber)) {
+    return "ERR The ID specified in XADD is equal or smaller than the target stream top item";
+  }
+
+  return null;
 }
