@@ -38,7 +38,9 @@ export const { values } = parseArgs({
 type Stream = Map<string, { key: string; value: string }[]>;
 
 export type DataType = "string" | "stream";
-export type DBValue = { type: "string"; value: string; expire: bigint | null } | { type: "stream"; value: Stream };
+export type DBValue =
+  | { type: "string"; value: string; expire: bigint | null }
+  | { type: "stream"; value: Stream; lastId: string };
 
 export let db: Map<string, DBValue> = new Map();
 

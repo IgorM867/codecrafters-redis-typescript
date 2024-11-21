@@ -1,5 +1,5 @@
 import * as net from "net";
-import { db, serverState, values } from "./main";
+import { db, serverState, values, type DBValue } from "./main";
 import { CommandParser } from "./parseRedisCommand";
 import {
   serialazeArray,
@@ -211,16 +211,33 @@ const commands = {
 
       values.push({ key, value });
     }
+
+    const [time, seqNumber] = entryId.split("-");
+    if (Number(time) < 0 || (Number(time) === 0 && Number(seqNumber) <= 0)) {
+      return serialazeSimpleError("ERR The ID specified in XADD must be greater than 0-0");
+    }
+
     if (db.has(streamKey)) {
       const dbEntry = db.get(streamKey)!;
       if (dbEntry.type === "string") return serialazeSimpleError("Err wrong number of arguments for 'XADD' command");
 
+      const [lastTime, lastSeqNumber] = dbEntry.lastId.split("-");
+      const [time, seqNumber] = entryId.split("-");
+
+      if (Number(time) < Number(lastTime)) {
+        return serialazeSimpleError("ERR The ID specified in XADD is equal or smaller than the target stream top item");
+      }
+      if (Number(time) === Number(lastTime) && Number(seqNumber) <= Number(lastSeqNumber)) {
+        return serialazeSimpleError("ERR The ID specified in XADD is equal or smaller than the target stream top item");
+      }
+
       dbEntry.value.set(entryId, values);
+      dbEntry.lastId = entryId;
 
       return serialazeSimpleString(entryId);
     }
 
-    db.set(streamKey, { type: "stream", value: new Map().set(entryId, values) });
+    db.set(streamKey, { type: "stream", value: new Map().set(entryId, values), lastId: entryId });
     return serialazeSimpleString(entryId);
   },
 };
