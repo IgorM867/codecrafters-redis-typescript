@@ -41,6 +41,16 @@ const waitState = {
 };
 const noResponseQueue: net.Socket[] = [];
 
+const blockState = {
+  isBlocking: false,
+  blockingKeys: [] as string[],
+  resolvePromise: (addedKey: string, startId: string) => {},
+  reset() {
+    this.isBlocking = false;
+    this.resolvePromise = () => {};
+  },
+};
+
 const commands = {
   PING: () => serialazeSimpleString("PONG"),
   ECHO: (arg: string | undefined) => {
@@ -226,6 +236,10 @@ const commands = {
       existingEntry.value.set(newEntryId, values);
       existingEntry.lastId = newEntryId;
 
+      if (blockState.isBlocking && blockState.blockingKeys.includes(streamKey)) {
+        blockState.resolvePromise(streamKey, newEntryId);
+      }
+
       return serialazeBulkString(newEntryId);
     }
 
@@ -233,6 +247,9 @@ const commands = {
     if (err) return serialazeSimpleError(err);
 
     db.set(streamKey, { type: "stream", value: new Map().set(newEntryId, values), lastId: newEntryId });
+    if (blockState.isBlocking && blockState.blockingKeys.includes(streamKey)) {
+      blockState.resolvePromise(streamKey, newEntryId);
+    }
     return serialazeBulkString(newEntryId);
   },
   XRANGE: (args: string[]) => {
@@ -275,8 +292,19 @@ const commands = {
     return serialazeArray(...entires);
   },
   XREAD: (args: string[]) => {
+    let timeout: string | undefined = "";
+    let isBlocked = false;
+    if (args.at(0) === "block") {
+      timeout = args.at(1);
+      if (!timeout || isNaN(Number(timeout))) {
+        return serialazeSimpleError("ERR wrong number of arguments for 'xread' command");
+      }
+      isBlocked = true;
+      args = args.slice(2);
+    }
+
     if (args.at(0) !== "streams") return serialazeSimpleError("ERR syntax error");
-    const streamKeys = [];
+    const streamKeys: string[] = [];
     const startIds = [];
 
     for (let i = 1; i < args.length; i++) {
@@ -321,6 +349,26 @@ const commands = {
         entires.push(serialazeArray(serialazeBulkString(entryId), serialazeBulkStringArray(keyValues)));
       }
       streams.push(serialazeArray(serialazeBulkString(streamKeys[i]), serialazeArray(...entires)));
+    }
+    if (isBlocked) {
+      return new Promise<Uint8Array>((res) => {
+        blockState.isBlocking = true;
+        blockState.blockingKeys = streamKeys;
+        blockState.resolvePromise = (addedKey: string, startId: string) =>
+          res(commands.XREAD(["streams", addedKey, startId]));
+
+        const timeoutId = setTimeout(() => {
+          res(serialazeBulkString(""));
+          blockState.reset();
+        }, Number(timeout));
+
+        const originalResolve = blockState.resolvePromise;
+        blockState.resolvePromise = (addedKey: string, startId: string) => {
+          clearTimeout(timeoutId);
+          originalResolve(addedKey, startId);
+          waitState.reset();
+        };
+      });
     }
 
     return serialazeArray(...streams);
