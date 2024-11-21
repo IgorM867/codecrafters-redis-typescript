@@ -211,42 +211,27 @@ const commands = {
 
       values.push({ key, value });
     }
-    const [timeStamp, seqNumber] = entryId.split("-");
 
-    let err = checkEntryId(entryId, "0-0");
-    if (err) return serialazeSimpleError(err);
+    const existingEntry = db.get(streamKey);
 
-    if (!db.has(streamKey)) {
-      let newEntryId = entryId;
-      if (seqNumber === "*") {
-        const newSeqNum = timeStamp === "0" ? "1" : "0";
-        newEntryId = `${timeStamp}-${newSeqNum}`;
-      }
+    if (existingEntry) {
+      if (existingEntry.type === "string")
+        return serialazeSimpleError("WRONGTYPE Operation against a key holding the wrong kind of value");
 
-      db.set(streamKey, { type: "stream", value: new Map().set(newEntryId, values), lastId: newEntryId });
-      return serialazeSimpleString(newEntryId);
+      const [err, newEntryId] = validateEntryId(entryId, existingEntry.lastId);
+      if (err) return serialazeSimpleError(err);
+
+      existingEntry.value.set(newEntryId, values);
+      existingEntry.lastId = newEntryId;
+
+      return serialazeBulkString(newEntryId);
     }
 
-    const dbEntry = db.get(streamKey)!;
-    if (dbEntry.type === "string") return serialazeSimpleError("Err wrong number of arguments for 'XADD' command");
-
-    err = checkEntryId(entryId, dbEntry.lastId);
+    const [err, newEntryId] = validateEntryId(entryId);
     if (err) return serialazeSimpleError(err);
 
-    let newEntryId = entryId;
-    if (seqNumber === "*") {
-      const [lastTimeStamp, lastSeqNumber] = dbEntry.lastId.split("-");
-      let newSeqNum = 0;
-      if (timeStamp === lastTimeStamp) {
-        newSeqNum = Number(lastSeqNumber) + 1;
-      }
-      newEntryId = `${timeStamp}-${newSeqNum}`;
-    }
-
-    dbEntry.value.set(newEntryId, values);
-    dbEntry.lastId = newEntryId;
-
-    return serialazeSimpleString(newEntryId);
+    db.set(streamKey, { type: "stream", value: new Map().set(newEntryId, values), lastId: newEntryId });
+    return serialazeBulkString(newEntryId);
   },
 };
 
@@ -356,21 +341,40 @@ function propagateToReplicas(data: Uint8Array, noReply: boolean = false) {
   serverState.replicas_connections.forEach((con) => con.write(data));
   serverState.master_repl_offset += data.length;
 }
-function checkEntryId(newEntryId: string, lastEntryId: string): string | null {
-  const [time, seqNumber] = newEntryId.split("-");
+function validateEntryId(newEntryId: string, lastEntryId: string = "0-0"): [string | null, string] {
   const [lastTime, lastSeqNumber] = lastEntryId.split("-").map(Number);
 
-  if (time === "*" && seqNumber === "*") return null;
+  if (newEntryId === "*") {
+    const timeStamp = Date.now();
+    let newSeqNumber = 0;
+    if (lastTime === timeStamp) newSeqNumber = lastSeqNumber + 1;
 
-  if (seqNumber === "*" && Number(time) < lastTime) {
-    return "ERR The ID specified in XADD is equal or smaller than the target stream top item";
-  }
-  if (Number(time) < 0 || (Number(time) === 0 && Number(seqNumber) <= 0)) {
-    return "ERR The ID specified in XADD must be greater than 0-0";
-  }
-  if (Number(time) < lastTime || (Number(time) === lastTime && Number(seqNumber) <= lastSeqNumber)) {
-    return "ERR The ID specified in XADD is equal or smaller than the target stream top item";
+    return [null, `${timeStamp}-${newSeqNumber}`];
   }
 
-  return null;
+  let [time, seqNumber] = newEntryId.split("-");
+
+  if (isNaN(Number(time))) {
+    return ["ERR Invalid stream ID specified as stream command argument", ""];
+  }
+  if (Number(time) <= 0 && Number(seqNumber) <= 0) {
+    return ["ERR The ID specified in XADD must be greater than 0-0", ""];
+  }
+  if (Number(time) < lastTime) {
+    return ["ERR The ID specified in XADD is equal or smaller than the target stream top item", ""];
+  }
+
+  if (seqNumber === "*") {
+    let newSeqNumber = 0;
+    if (time === "0") newSeqNumber = 1;
+    if (Number(time) === lastTime) newSeqNumber = lastSeqNumber + 1;
+
+    return [null, `${time}-${newSeqNumber}`];
+  }
+
+  if (Number(time) === lastTime && Number(seqNumber) <= lastSeqNumber) {
+    return ["ERR The ID specified in XADD is equal or smaller than the target stream top item", ""];
+  }
+
+  return [null, newEntryId];
 }
