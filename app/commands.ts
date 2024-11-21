@@ -308,7 +308,7 @@ const commands = {
     const startIds = [];
 
     for (let i = 1; i < args.length; i++) {
-      if (args[i].includes("-")) {
+      if (args[i].includes("-") || args[i] === "$") {
         startIds.push(args[i]);
         continue;
       }
@@ -327,8 +327,8 @@ const commands = {
       if (stream.type !== "stream") {
         return serialazeSimpleError("WRONGTYPE Operation against a key holding the wrong kind of value");
       }
-
-      const startTimeSeq = startIds[i].split("-").map(Number);
+      const startId = startIds[i] === "$" ? stream.lastId : startIds[i];
+      const startTimeSeq = startId.split("-").map(Number);
 
       const startTime = startTimeSeq[0] || 0;
       const startSeq = startTimeSeq.at(1) || 0;
