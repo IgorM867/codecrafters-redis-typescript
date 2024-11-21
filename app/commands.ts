@@ -250,10 +250,10 @@ const commands = {
     const startTimeSeq = startId.split("-").map(Number);
     const endTimeSeq = endId.split("-").map(Number);
 
-    const startTime = startTimeSeq[0];
+    const startTime = startTimeSeq[0] || 0;
     const startSeq = startTimeSeq.at(1) || 0;
 
-    const endTime = endTimeSeq[0];
+    const endTime = endTimeSeq[0] || Infinity;
     const endSeq = endTimeSeq.at(1) || Infinity;
 
     const entires = [];
