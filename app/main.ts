@@ -35,7 +35,13 @@ export const { values } = parseArgs({
   allowPositionals: true,
 });
 
-export let db: Map<string, { value: string; expire: bigint | null }> = new Map();
+type Stream = Map<string, { key: string; value: string }[]>;
+
+export type DataType = "string" | "stream";
+export type DBValue = { type: "string"; value: string; expire: bigint | null } | { type: "stream"; value: Stream };
+
+export let db: Map<string, DBValue> = new Map();
+
 export const serverState: {
   port: number;
   role: "master" | "slave";

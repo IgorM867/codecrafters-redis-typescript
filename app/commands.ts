@@ -22,7 +22,8 @@ export type CommandName =
   | "REPLCONF"
   | "PSYNC"
   | "WAIT"
-  | "TYPE";
+  | "TYPE"
+  | "XADD";
 
 const waitState = {
   isWaiting: false,
@@ -55,12 +56,12 @@ const commands = {
     if (args[2] && args[2].toUpperCase() === "PX") {
       if (!args[3]) return serialazeSimpleString("ERR syntax error");
 
-      db.set(key, { value, expire: BigInt(Date.now()) + BigInt(args[3]) });
+      db.set(key, { value, expire: BigInt(Date.now()) + BigInt(args[3]), type: "string" });
 
       return serialazeSimpleString("OK");
     }
 
-    db.set(key, { value, expire: null });
+    db.set(key, { value, expire: null, type: "string" });
     return serialazeSimpleString("OK");
   },
   GET: (key: string | undefined) => {
@@ -68,11 +69,13 @@ const commands = {
       return serialazeBulkString("");
     }
     const entry = db.get(key)!;
-
-    if (entry.expire && entry.expire - BigInt(Date.now()) <= 0) {
-      return serialazeBulkString("");
+    if (entry.type === "string") {
+      if (entry.expire && entry.expire - BigInt(Date.now()) <= 0) {
+        return serialazeBulkString("");
+      }
+      return serialazeBulkString(entry.value);
     }
-    return serialazeBulkString(entry.value);
+    return serialazeSimpleError("WRONGTYPE Operation against a key holding the wrong kind of value");
   },
   CONFIG: (args: string[]) => {
     if (args.length === 0) return serialazeSimpleError("ERR wrong number of arguments for 'config' command");
@@ -192,7 +195,33 @@ const commands = {
 
     if (!value) return serialazeSimpleString("none");
 
-    return serialazeSimpleString("string");
+    return serialazeSimpleString(value.type);
+  },
+  XADD: (args: string[]) => {
+    const streamKey = args.at(0);
+    const entryId = args.at(1);
+
+    if (!streamKey || !entryId) return serialazeSimpleError("Err wrong number of arguments for 'XADD' command");
+
+    const values: { key: string; value: string }[] = [];
+    for (let i = 2; i < args.length; i += 2) {
+      const key = args[i];
+      const value = args.at(i + 1);
+      if (!value) return serialazeSimpleError("Err wrong number of arguments for 'XADD' command");
+
+      values.push({ key, value });
+    }
+    if (db.has(streamKey)) {
+      const dbEntry = db.get(streamKey)!;
+      if (dbEntry.type === "string") return serialazeSimpleError("Err wrong number of arguments for 'XADD' command");
+
+      dbEntry.value.set(entryId, values);
+
+      return serialazeSimpleString(entryId);
+    }
+
+    db.set(streamKey, { type: "stream", value: new Map().set(entryId, values) });
+    return serialazeSimpleString(entryId);
   },
 };
 
@@ -245,6 +274,9 @@ export async function execCommand(data: Buffer, connection: net.Socket, fromMast
       }
       case "TYPE":
         response = commands.TYPE(command.args.at(0));
+        break;
+      case "XADD":
+        response = commands.XADD(command.args);
         break;
       default:
         response = serialazeSimpleError(`Unknown command: ${command.name}`);

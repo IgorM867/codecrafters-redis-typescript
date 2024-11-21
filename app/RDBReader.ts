@@ -1,4 +1,5 @@
 import type { BunFile } from "bun";
+import type { DataType, DBValue } from "./main";
 
 const opCodes: Record<number, string> = {
   0xff: "EOF",
@@ -63,7 +64,7 @@ export class RDBReader {
     const tableSize = this.decodeSize();
     const expiryTableSize = this.decodeSize();
 
-    const values: Record<string, { value: string; expire: bigint | null }> = {};
+    const values: Record<string, DBValue> = {};
 
     for (let i = 0; i < tableSize; i++) {
       const currentByte = this.peekByte();
@@ -71,18 +72,18 @@ export class RDBReader {
         this.offset++;
         const timeStamp = this.view.getBigUint64(this.offset, true);
         this.offset += 8;
-        const { key, value } = this.decodeKeyValuePair();
+        const { key, value, type } = this.decodeKeyValuePair();
 
-        values[key] = { value, expire: timeStamp };
+        values[key] = { value, expire: timeStamp, type };
       } else if (currentByte === 0xfd) {
         this.offset++;
         const timeStamp = this.view.getUint32(this.offset, true);
-        const { key, value } = this.decodeKeyValuePair();
-        values[key] = { value, expire: BigInt(timeStamp) * 1000n };
+        const { key, value, type } = this.decodeKeyValuePair();
+        values[key] = { value, expire: BigInt(timeStamp) * 1000n, type };
       } else {
-        const { key, value } = this.decodeKeyValuePair();
+        const { key, value, type } = this.decodeKeyValuePair();
 
-        values[key] = { value, expire: null };
+        values[key] = { value, expire: null, type };
       }
     }
 
@@ -97,14 +98,16 @@ export class RDBReader {
     const dataType = this.readByte();
     const key = this.decodeString();
     let value;
+    let type: DataType;
 
     if (dataType === 0) {
       value = this.decodeString();
+      type = "string";
     } else {
       throw Error(`This data type is not supported: ${dataType}`);
     }
 
-    return { key, value };
+    return { key, value, type };
   }
   private decodeMetadata() {
     const metadata: Record<string, string> = {};
