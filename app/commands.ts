@@ -357,14 +357,20 @@ const commands = {
         blockState.resolvePromise = (addedKey: string, startId: string) =>
           res(commands.XREAD(["streams", addedKey, startId]));
 
-        const timeoutId = setTimeout(() => {
-          res(serialazeBulkString(""));
-          blockState.reset();
-        }, Number(timeout));
+        let timeoutId: Timer | null = null;
+
+        if (Number(timeout) > 0) {
+          timeoutId = setTimeout(() => {
+            res(serialazeBulkString(""));
+            blockState.reset();
+          }, Number(timeout));
+        }
 
         const originalResolve = blockState.resolvePromise;
         blockState.resolvePromise = (addedKey: string, startId: string) => {
-          clearTimeout(timeoutId);
+          if (timeoutId) {
+            clearTimeout(timeoutId);
+          }
           originalResolve(addedKey, startId);
           waitState.reset();
         };
