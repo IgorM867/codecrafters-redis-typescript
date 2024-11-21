@@ -276,37 +276,54 @@ const commands = {
   },
   XREAD: (args: string[]) => {
     if (args.at(0) !== "streams") return serialazeSimpleError("ERR syntax error");
-    const streamKey = args.at(1);
-    const startId = args.at(2);
-    if (!streamKey || !startId) return serialazeSimpleError("ERR wrong number of arguments for 'xread' command");
+    const streamKeys = [];
+    const startIds = [];
 
-    const stream = db.get(streamKey);
-    if (!stream) return serialazeBulkString("");
-    if (stream.type !== "stream") {
-      return serialazeSimpleError("WRONGTYPE Operation against a key holding the wrong kind of value");
-    }
-
-    const startTimeSeq = startId.split("-").map(Number);
-
-    const startTime = startTimeSeq[0] || 0;
-    const startSeq = startTimeSeq.at(1) || 0;
-
-    const entires = [];
-
-    for (const [entryId, values] of stream.value.entries()) {
-      const [time, seq] = entryId.split("-").map(Number);
-
-      if (time < startTime) continue;
-      if (time === startTime && seq < startSeq) continue;
-
-      const keyValues = [];
-      for (const pair of values) {
-        keyValues.push(pair.key);
-        keyValues.push(pair.value);
+    for (let i = 1; i < args.length; i++) {
+      if (args[i].includes("-")) {
+        startIds.push(args[i]);
+        continue;
       }
-      entires.push(serialazeArray(serialazeBulkString(entryId), serialazeBulkStringArray(keyValues)));
+
+      streamKeys.push(args[i]);
     }
-    return serialazeArray(serialazeArray(serialazeBulkString(streamKey), serialazeArray(...entires)));
+
+    if (streamKeys.length !== startIds.length)
+      return serialazeSimpleError("ERR wrong number of arguments for 'xread' command");
+
+    const streams = [];
+
+    for (let i = 0; i < streamKeys.length; i++) {
+      const stream = db.get(streamKeys[i]);
+      if (!stream) continue;
+      if (stream.type !== "stream") {
+        return serialazeSimpleError("WRONGTYPE Operation against a key holding the wrong kind of value");
+      }
+
+      const startTimeSeq = startIds[i].split("-").map(Number);
+
+      const startTime = startTimeSeq[0] || 0;
+      const startSeq = startTimeSeq.at(1) || 0;
+
+      const entires = [];
+
+      for (const [entryId, values] of stream.value.entries()) {
+        const [time, seq] = entryId.split("-").map(Number);
+
+        if (time < startTime) continue;
+        if (time === startTime && seq < startSeq) continue;
+
+        const keyValues = [];
+        for (const pair of values) {
+          keyValues.push(pair.key);
+          keyValues.push(pair.value);
+        }
+        entires.push(serialazeArray(serialazeBulkString(entryId), serialazeBulkStringArray(keyValues)));
+      }
+      streams.push(serialazeArray(serialazeBulkString(streamKeys[i]), serialazeArray(...entires)));
+    }
+
+    return serialazeArray(...streams);
   },
 };
 
