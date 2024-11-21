@@ -23,7 +23,8 @@ export type CommandName =
   | "PSYNC"
   | "WAIT"
   | "TYPE"
-  | "XADD";
+  | "XADD"
+  | "XRANGE";
 
 const waitState = {
   isWaiting: false,
@@ -233,6 +234,45 @@ const commands = {
     db.set(streamKey, { type: "stream", value: new Map().set(newEntryId, values), lastId: newEntryId });
     return serialazeBulkString(newEntryId);
   },
+  XRANGE: (args: string[]) => {
+    const streamKey = args.at(0);
+    if (!streamKey) return serialazeSimpleError("ERR wrong number of arguments for 'xrange' command");
+
+    const stream = db.get(streamKey);
+    if (!stream) return serialazeArray();
+    if (stream.type !== "stream") {
+      return serialazeSimpleError("WRONGTYPE Operation against a key holding the wrong kind of value");
+    }
+
+    const startId = args.at(1);
+    const endId = args.at(2);
+    if (!startId || !endId) return serialazeSimpleError("ERR wrong number of arguments for 'xrange' command");
+    const startTimeSeq = startId.split("-").map(Number);
+    const endTimeSeq = endId.split("-").map(Number);
+
+    const startTime = startTimeSeq[0];
+    const startSeq = startTimeSeq.at(1) || 0;
+
+    const endTime = endTimeSeq[0];
+    const endSeq = endTimeSeq.at(1) || Infinity;
+
+    const entires = [];
+
+    for (const [entryId, values] of stream.value.entries()) {
+      const [time, seq] = entryId.split("-").map(Number);
+
+      if (time < startTime || time > endTime) continue;
+      if (time === startTime && (seq < startSeq || seq > endSeq)) continue;
+
+      const keyValues = [];
+      for (const pair of values) {
+        keyValues.push(pair.key);
+        keyValues.push(pair.value);
+      }
+      entires.push(serialazeArray(serialazeBulkString(entryId), serialazeBulkStringArray(keyValues)));
+    }
+    return serialazeArray(...entires);
+  },
 };
 
 const writeCommands = ["SET"];
@@ -278,15 +318,17 @@ export async function execCommand(data: Buffer, connection: net.Socket, fromMast
       case "PSYNC":
         response = commands.PSYNC(command.args);
         break;
-      case "WAIT": {
+      case "WAIT":
         response = commands.WAIT(command.args);
         break;
-      }
       case "TYPE":
         response = commands.TYPE(command.args.at(0));
         break;
       case "XADD":
         response = commands.XADD(command.args);
+        break;
+      case "XRANGE":
+        response = commands.XRANGE(command.args);
         break;
       default:
         response = serialazeSimpleError(`Unknown command: ${command.name}`);
