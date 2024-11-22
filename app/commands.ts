@@ -25,7 +25,8 @@ export type CommandName =
   | "TYPE"
   | "XADD"
   | "XRANGE"
-  | "XREAD";
+  | "XREAD"
+  | "INCR";
 
 const waitState = {
   isWaiting: false,
@@ -379,6 +380,27 @@ const commands = {
 
     return serialazeArray(...streams);
   },
+  INCR: (key: string | undefined) => {
+    if (!key) {
+      return serialazeSimpleError("ERR wrong number of arguments for 'incr' command");
+    }
+    const entry = db.get(key);
+
+    if (!entry) {
+      commands.SET([key, "1"]);
+      return serialazeInteger(1);
+    }
+    if (entry.type !== "string") {
+      return serialazeSimpleError("WRONGTYPE Operation against a key holding the wrong kind of value");
+    }
+    if (isNaN(Number(entry.value))) {
+      return serialazeSimpleError("ERR value is not an integer or out of range");
+    }
+    const newValue = Number(entry.value) + 1;
+    entry.value = String(newValue);
+
+    return serialazeInteger(newValue);
+  },
 };
 
 const writeCommands = ["SET"];
@@ -438,6 +460,9 @@ export async function execCommand(data: Buffer, connection: net.Socket, fromMast
         break;
       case "XREAD":
         response = commands.XREAD(command.args);
+        break;
+      case "INCR":
+        response = commands.INCR(command.args.at(0));
         break;
       default:
         response = serialazeSimpleError(`Unknown command: ${command.name}`);
