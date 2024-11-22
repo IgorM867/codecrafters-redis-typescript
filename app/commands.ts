@@ -54,6 +54,11 @@ const blockState = {
   },
 };
 
+const transactionState = {
+  isStarted: false,
+  queue: [] as Array<() => Uint8Array>,
+};
+
 const commands = {
   PING: () => serialazeSimpleString("PONG"),
   ECHO: (arg: string | undefined) => {
@@ -404,10 +409,21 @@ const commands = {
     return serialazeInteger(newValue);
   },
   MULTI: () => {
+    transactionState.isStarted = true;
     return serialazeSimpleString("OK");
   },
   EXEC: () => {
-    return serialazeSimpleError("ERR EXEC without MULTI");
+    if (!transactionState.isStarted) {
+      return serialazeSimpleError("ERR EXEC without MULTI");
+    }
+    const responses = [];
+
+    for (const command of transactionState.queue) {
+      responses.push(command());
+    }
+
+    transactionState.isStarted = false;
+    return serialazeArray(...responses);
   },
 };
 
