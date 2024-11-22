@@ -54,17 +54,15 @@ const blockState = {
     this.resolvePromise = () => {};
   },
 };
+class Transaction {
+  public queue: Array<() => Uint8Array | Promise<Uint8Array> | undefined> = [];
+  public connection: net.Socket;
+  constructor(con: net.Socket) {
+    this.connection = con;
+  }
+}
 
-const transactionState = {
-  isStarted: false,
-  queue: [] as Array<() => Uint8Array | Promise<Uint8Array> | undefined>,
-  connection: null as net.Socket | null,
-  reset() {
-    this.isStarted = false;
-    this.queue = [];
-    this.connection = null;
-  },
-};
+const transactions: Transaction[] = [];
 
 const commands = {
   PING: () => serialazeSimpleString("PONG"),
@@ -421,17 +419,18 @@ const commands = {
 
     return serialazeInteger(newValue);
   },
-  MULTI: () => {
-    transactionState.isStarted = true;
+  MULTI: (_: string[], connection: net.Socket) => {
+    transactions.push(new Transaction(connection));
     return serialazeSimpleString("OK");
   },
-  EXEC: async () => {
-    if (!transactionState.isStarted) {
+  EXEC: async (_: string[], connection: net.Socket) => {
+    const transaction = transactions.find((transaction) => transaction.connection === connection);
+    if (!transaction) {
       return serialazeSimpleError("ERR EXEC without MULTI");
     }
     const responses = [];
 
-    for (const command of transactionState.queue) {
+    for (const command of transaction.queue) {
       const response = command();
       const resolvedResponse = await Promise.resolve(response);
       if (resolvedResponse === undefined) continue;
@@ -439,15 +438,16 @@ const commands = {
       responses.push(resolvedResponse);
     }
 
-    transactionState.reset();
+    transactions.splice(transactions.indexOf(transaction), 1);
     return serialazeArray(...responses);
   },
-  DISCARD: () => {
-    if (!transactionState.isStarted) {
+  DISCARD: (_: string[], connection: net.Socket) => {
+    const transaction = transactions.find((transaction) => transaction.connection === connection);
+    if (!transaction) {
       return serialazeSimpleError("ERR DISCARD without MULTI");
     }
 
-    transactionState.reset();
+    transactions.splice(transactions.indexOf(transaction), 1);
     return serialazeSimpleString("OK");
   },
 };
@@ -473,16 +473,15 @@ export async function execCommand(data: Buffer, connection: net.Socket, fromMast
 
     if (!fun) {
       response = serialazeSimpleError(`Unknown command: ${command.name}`);
+    } else if (transactionCommands.includes(commandName)) {
+      response = fun(command.args, connection);
     } else {
-      if (
-        transactionState.isStarted &&
-        transactionState.connection === connection &&
-        !transactionCommands.includes(commandName)
-      ) {
-        response = serialazeSimpleString("QUEUED");
-        transactionState.queue.push(() => fun(command.args));
+      const transaction = transactions.find((transaction) => transaction.connection === connection);
+      if (!transaction) {
+        response = fun(command.args, connection);
       } else {
-        response = fun(command.args);
+        response = serialazeSimpleString("QUEUED");
+        transaction.queue.push(() => fun(command.args, connection));
       }
     }
 
@@ -501,8 +500,6 @@ export async function execCommand(data: Buffer, connection: net.Socket, fromMast
       if (commandName === "PSYNC") {
         sendRDBFile(connection);
         serverState.replicas_connections.push(connection);
-      } else if (commandName === "MULTI") {
-        transactionState.connection = connection;
       }
       if (writeCommands.includes(commandName)) {
         propagateToReplicas(Uint8Array.from(data));
