@@ -27,7 +27,8 @@ export type CommandName =
   | "XRANGE"
   | "XREAD"
   | "INCR"
-  | "MULTI";
+  | "MULTI"
+  | "EXEC";
 
 const waitState = {
   isWaiting: false,
@@ -405,6 +406,9 @@ const commands = {
   MULTI: () => {
     return serialazeSimpleString("OK");
   },
+  EXEC: () => {
+    return serialazeSimpleError("ERR EXEC without MULTI");
+  },
 };
 
 const writeCommands = ["SET"];
@@ -470,6 +474,9 @@ export async function execCommand(data: Buffer, connection: net.Socket, fromMast
         break;
       case "MULTI":
         response = commands.MULTI();
+        break;
+      case "EXEC":
+        response = commands.EXEC();
         break;
       default:
         response = serialazeSimpleError(`Unknown command: ${command.name}`);
