@@ -26,7 +26,8 @@ export type CommandName =
   | "XADD"
   | "XRANGE"
   | "XREAD"
-  | "INCR";
+  | "INCR"
+  | "MULTI";
 
 const waitState = {
   isWaiting: false,
@@ -401,6 +402,9 @@ const commands = {
 
     return serialazeInteger(newValue);
   },
+  MULTI: () => {
+    return serialazeSimpleString("OK");
+  },
 };
 
 const writeCommands = ["SET"];
@@ -463,6 +467,9 @@ export async function execCommand(data: Buffer, connection: net.Socket, fromMast
         break;
       case "INCR":
         response = commands.INCR(command.args.at(0));
+        break;
+      case "MULTI":
+        response = commands.MULTI();
         break;
       default:
         response = serialazeSimpleError(`Unknown command: ${command.name}`);
