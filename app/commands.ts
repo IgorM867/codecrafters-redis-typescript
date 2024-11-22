@@ -56,14 +56,15 @@ const blockState = {
 
 const transactionState = {
   isStarted: false,
-  queue: [] as Array<() => Uint8Array>,
+  queue: [] as Array<() => Uint8Array | Promise<Uint8Array> | undefined>,
+  connection: null as net.Socket | null,
 };
 
 const commands = {
   PING: () => serialazeSimpleString("PONG"),
-  ECHO: (arg: string | undefined) => {
-    if (arg) {
-      return serialazeBulkString(arg);
+  ECHO: (args: string[]) => {
+    if (args.at(0)) {
+      return serialazeBulkString(args[0]);
     } else {
       return serialazeSimpleError("ERR wrong number of arguments for 'echo' command");
     }
@@ -84,7 +85,8 @@ const commands = {
     db.set(key, { value, expire: null, type: "string" });
     return serialazeSimpleString("OK");
   },
-  GET: (key: string | undefined) => {
+  GET: (args: string[]) => {
+    const key = args.at(0);
     if (!key || !db.has(key)) {
       return serialazeBulkString("");
     }
@@ -102,12 +104,13 @@ const commands = {
 
     switch (args[0].toUpperCase()) {
       case "GET":
-        return commands.GET_CONFIG(args.at(1));
+        return commands.GET_CONFIG(args.slice(1));
       default:
         return serialazeSimpleError(`Unknown CONFIG subcommand: ${args[1]}`);
     }
   },
-  GET_CONFIG: (arg: string | undefined) => {
+  GET_CONFIG: (args: string[]) => {
+    const arg = args.at(0);
     if (!arg) return serialazeSimpleError("ERR wrong number of arguments for 'config|get' command");
 
     switch (arg.toLowerCase()) {
@@ -119,7 +122,8 @@ const commands = {
         return serialazeArray();
     }
   },
-  KEYS: (arg: string | undefined) => {
+  KEYS: (args: string[]) => {
+    const arg = args.at(0);
     if (!arg) return serialazeSimpleError("ERR wrong number of arguments for 'keys' command");
 
     if (arg === "*") {
@@ -130,7 +134,8 @@ const commands = {
 
     return serialazeBulkString("");
   },
-  INFO: (arg: string | undefined) => {
+  INFO: (args: string[]) => {
+    const arg = args.at(0);
     const sections = [
       {
         name: "Replication",
@@ -209,7 +214,8 @@ const commands = {
       };
     });
   },
-  TYPE: (key: string | undefined) => {
+  TYPE: (args: string[]) => {
+    const key = args.at(0);
     if (!key) return serialazeSimpleError("ERR wrong number of arguments for 'type' command");
     const value = db.get(key);
 
@@ -387,7 +393,8 @@ const commands = {
 
     return serialazeArray(...streams);
   },
-  INCR: (key: string | undefined) => {
+  INCR: (args: string[]) => {
+    const key = args.at(0);
     if (!key) {
       return serialazeSimpleError("ERR wrong number of arguments for 'incr' command");
     }
@@ -412,25 +419,35 @@ const commands = {
     transactionState.isStarted = true;
     return serialazeSimpleString("OK");
   },
-  EXEC: () => {
+  EXEC: async () => {
     if (!transactionState.isStarted) {
       return serialazeSimpleError("ERR EXEC without MULTI");
     }
     const responses = [];
 
     for (const command of transactionState.queue) {
-      responses.push(command());
+      const response = command();
+      const resolvedResponse = await Promise.resolve(response);
+      if (resolvedResponse === undefined) continue;
+
+      responses.push(resolvedResponse);
     }
 
     transactionState.isStarted = false;
+    transactionState.connection = null;
+    transactionState.queue = [];
     return serialazeArray(...responses);
   },
 };
 
 const writeCommands = ["SET"];
 
+let connectionLast: any = null;
+
 export async function execCommand(data: Buffer, connection: net.Socket, fromMaster = false) {
   const parser = new CommandParser(data);
+  console.log(connectionLast === connection);
+  connectionLast = connection;
 
   const [err, results] = parser.parse();
   if (err) {
@@ -442,61 +459,20 @@ export async function execCommand(data: Buffer, connection: net.Socket, fromMast
 
   for (const command of results) {
     const commandName = command.name.toUpperCase() as CommandName;
-    switch (commandName as CommandName) {
-      case "PING":
-        response = commands.PING();
-        break;
-      case "ECHO":
-        response = commands.ECHO(command.args.at(0));
-        break;
-      case "SET":
-        response = commands.SET(command.args);
-        break;
-      case "GET":
-        response = commands.GET(command.args.at(0));
-        break;
-      case "CONFIG":
-        response = commands.CONFIG(command.args);
-        break;
-      case "KEYS":
-        response = commands.KEYS(command.args.at(0));
-        break;
-      case "INFO":
-        response = commands.INFO(command.args.at(0));
-        break;
-      case "REPLCONF":
-        response = commands.REPLCONF(command.args);
-        break;
-      case "PSYNC":
-        response = commands.PSYNC(command.args);
-        break;
-      case "WAIT":
-        response = commands.WAIT(command.args);
-        break;
-      case "TYPE":
-        response = commands.TYPE(command.args.at(0));
-        break;
-      case "XADD":
-        response = commands.XADD(command.args);
-        break;
-      case "XRANGE":
-        response = commands.XRANGE(command.args);
-        break;
-      case "XREAD":
-        response = commands.XREAD(command.args);
-        break;
-      case "INCR":
-        response = commands.INCR(command.args.at(0));
-        break;
-      case "MULTI":
-        response = commands.MULTI();
-        break;
-      case "EXEC":
-        response = commands.EXEC();
-        break;
-      default:
-        response = serialazeSimpleError(`Unknown command: ${command.name}`);
+
+    const fun = commands[commandName];
+
+    if (!fun) {
+      response = serialazeSimpleError(`Unknown command: ${command.name}`);
+    } else {
+      if (transactionState.isStarted && transactionState.connection === connection && commandName !== "EXEC") {
+        response = serialazeSimpleString("QUEUED");
+        transactionState.queue.push(() => fun(command.args));
+      } else {
+        response = fun(command.args);
+      }
     }
+
     let resolvedResponse = await Promise.resolve(response);
     if (resolvedResponse === undefined) return;
 
@@ -512,6 +488,8 @@ export async function execCommand(data: Buffer, connection: net.Socket, fromMast
       if (commandName === "PSYNC") {
         sendRDBFile(connection);
         serverState.replicas_connections.push(connection);
+      } else if (commandName === "MULTI") {
+        transactionState.connection = connection;
       }
       if (writeCommands.includes(commandName)) {
         propagateToReplicas(Uint8Array.from(data));
