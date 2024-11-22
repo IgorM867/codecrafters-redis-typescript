@@ -28,7 +28,8 @@ export type CommandName =
   | "XREAD"
   | "INCR"
   | "MULTI"
-  | "EXEC";
+  | "EXEC"
+  | "DISCARD";
 
 const waitState = {
   isWaiting: false,
@@ -58,6 +59,11 @@ const transactionState = {
   isStarted: false,
   queue: [] as Array<() => Uint8Array | Promise<Uint8Array> | undefined>,
   connection: null as net.Socket | null,
+  reset() {
+    this.isStarted = false;
+    this.queue = [];
+    this.connection = null;
+  },
 };
 
 const commands = {
@@ -433,21 +439,24 @@ const commands = {
       responses.push(resolvedResponse);
     }
 
-    transactionState.isStarted = false;
-    transactionState.connection = null;
-    transactionState.queue = [];
+    transactionState.reset();
     return serialazeArray(...responses);
+  },
+  DISCARD: () => {
+    if (!transactionState.isStarted) {
+      return serialazeSimpleError("ERR DISCARD without MULTI");
+    }
+
+    transactionState.reset();
+    return serialazeSimpleString("OK");
   },
 };
 
 const writeCommands = ["SET"];
-
-let connectionLast: any = null;
+const transactionCommands = ["EXEC", "DISCARD"];
 
 export async function execCommand(data: Buffer, connection: net.Socket, fromMaster = false) {
   const parser = new CommandParser(data);
-  console.log(connectionLast === connection);
-  connectionLast = connection;
 
   const [err, results] = parser.parse();
   if (err) {
@@ -465,7 +474,11 @@ export async function execCommand(data: Buffer, connection: net.Socket, fromMast
     if (!fun) {
       response = serialazeSimpleError(`Unknown command: ${command.name}`);
     } else {
-      if (transactionState.isStarted && transactionState.connection === connection && commandName !== "EXEC") {
+      if (
+        transactionState.isStarted &&
+        transactionState.connection === connection &&
+        !transactionCommands.includes(commandName)
+      ) {
         response = serialazeSimpleString("QUEUED");
         transactionState.queue.push(() => fun(command.args));
       } else {
